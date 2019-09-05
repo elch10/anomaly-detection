@@ -14,17 +14,18 @@ class DenoisingAutoencoder(nn.Module):
         self.last_activations = None
 
     def forward(self, X):
-        inter = self.encoder(X)
+        inter = self.input_dropout(X)
+        inter = self.encoder(inter)
         inter = F.sigmoid(inter)
         self.last_activations = inter
         inter = self.dropout(inter)
         inter = self.decoder(inter)
         return F.sigmoid(inter)
 
-class CustomLoss(nn.Module):
+class DAELoss(nn.Module):
     def __init__(self, model, alpha, beta, sparsity):
         super().__init__(self)
-        self.model = model
+        self.model = model 
         self.alpha = alpha
         self.beta = beta
         self.sparsity = sparsity
