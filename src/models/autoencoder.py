@@ -1,55 +1,51 @@
+from keras import Sequential
+from keras.layers import Dense, Input, Dropout
+from keras.regularizers import l2
+from keras.models import Model
+import keras
 import numpy as np
-import torch
-import torch.nn as nn
-import torch.nn.functional as F
 
-class DenoisingAutoencoder(nn.Module):
-    def __init__(self, input_size, output_size, lambda_fraction, dropout_fraction):
-        super().__init__(self)
-        self.input_dropout = nn.Dropout(lambda_fraction)
-        self.encoder = nn.Linear(input_size, output_size)
-        self.dropout = nn.Dropout(dropout_fraction)
-        self.decoder = nn.Linear(output_size, input_size)
+def build_autoencoder(input_shape, layers_size, reg_strength=0.01, 
+                      dropout_fraction=0.1, **compile_attrs):
+    """
+    Builds autoencoder model with hidden layers of size `layers_size`
+    """
+    model = Sequential()
 
-        self.last_activations = None
+    model.add(Dense(layers_size[0],
+            input_shape=(input_shape,),
+            kernel_regularizer=l2(reg_strength)))
 
-    def forward(self, X):
-        inter = self.input_dropout(X)
-        inter = self.encoder(inter)
-        inter = F.sigmoid(inter)
-        self.last_activations = inter
-        inter = self.dropout(inter)
-        inter = self.decoder(inter)
-        return F.sigmoid(inter)
+    for size in layers_size[1:]:
+        model.add(Dense(
+            size,
+            kernel_regularizer=l2(reg_strength),
+        ))
 
-class DAELoss(nn.Module):
-    def __init__(self, model, alpha, beta, sparsity):
-        super().__init__(self)
-        self.model = model 
-        self.alpha = alpha
-        self.beta = beta
-        self.sparsity = sparsity
-        self.mse = nn.MSELoss
+    compile_attrs['loss'] = compile_attrs.get('loss', 'mae')
+    model.compile(**compile_attrs)
+    return model
 
-    def forward(self, input, target):
-        mse = 1/2 * self.mse(input, target)
-        weight_regularization = self.alpha/2 * (self.model.encoder.weight.norm() +\
-            self.model.decoder.weight.norm())
 
-        # TODO: misunderstanding sparsity
-        sparsity_loss = torch.tensor([0.])
-        for value in self.model.last_activations.mean(axis=0):
-            sparsity_loss += self.beta * F.kl_div(value, self.sparsity)
+def build_matrix_autoencoder(input_length, input_shape, layers_size, 
+                             reg_strength=0.01, dropout_fraction=0.1, **compile_attrs):
+    
+    def create_autoencoder(layers_size, reg_strength, dropout_fraction):
+        model = Sequential()
+        model.add(Dropout(dropout_fraction))
+        for layer_size in layers_size[:-1]:
+            model.add(Dense(layer_size, activation='tanh', kernel_regularizer=l2(reg_strength)))
+        model.add(Dense(layers_size[-1], kernel_regularizer=l2(reg_strength)))
+        return model
 
-        return mse + weight_regularization + sparsity_loss
+    inputs = [Input(shape=(input_shape,)) for i in range(input_length)]
 
-# TODO: check this
-class ConvFeatrueMapping(nn.Module):
-    def __init__(self, in_channels, out_channels, kernel_size, pooling_size):
-        super().__init__(self)
-        self.conv = nn.Conv1d(in_channels, out_channels, kernel_size)
-        self.pooling_size = pooling_size
+    models = [create_autoencoder(layers_size, reg_strength, dropout_fraction) for i in range(input_length)]
+    
+    outputs = [model(inputs[i]) for i, model in enumerate(models)]
 
-    def forward(self, X):
-        inter = F.sigmoid(self.conv(X))
-        return F.max_pool1d(inter, kernel_size=self.pooling_size)
+    final_model = Model(inputs=inputs, outputs=outputs)
+    compile_attrs['loss'] = compile_attrs.get('loss', 'mae')
+    final_model.compile(**compile_attrs)
+
+    return final_model
