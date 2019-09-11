@@ -10,10 +10,12 @@ def build_model(input_length, input_shape, lstm_layers_size,
     """
     model = Sequential()
 
-    model.add(LSTM(lstm_layers_size[0],
-                   input_shape=(input_length, input_shape),
-                   return_sequences=True, 
-                   kernel_regularizer=l2(reg_strength)))
+    model.add(LSTM(
+        lstm_layers_size[0],
+        input_shape=(input_length, input_shape),
+        return_sequences=True, 
+        kernel_regularizer=l2(reg_strength)
+    ))
 
     for size in lstm_layers_size[1:]:
         # model.add(Dropout(dropout_coeff))
@@ -25,5 +27,5 @@ def build_model(input_length, input_shape, lstm_layers_size,
 
     model.add(TimeDistributed(Dense(input_shape)))
 
-    model.compile(loss="mse", **compile_attrs)
+    model.compile(loss="mae", **compile_attrs)
     return model

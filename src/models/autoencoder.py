@@ -5,47 +5,62 @@ from keras.models import Model
 import keras
 import numpy as np
 
-def build_autoencoder(input_shape, layers_size, reg_strength=0.01, 
-                      dropout_fraction=0.1, **compile_attrs):
+def create_autoencoder(input_shape, hidden_layers_size, reg_strength=0.01, input_dropout=0.1):
     """
-    Builds autoencoder model with hidden layers of size `layers_size`
+    Creates autoencoder model with hidden layers of size `hidden_layers_size`
+    Automatically adds last layer to be with size `input_shape`
+    If `input_dropout` is in range [0, 1] then would be added Dropout on input data with `input_dropout` rate
     """
     model = Sequential()
 
-    model.add(Dense(layers_size[0],
-            input_shape=(input_shape,),
-            kernel_regularizer=l2(reg_strength)))
+    if 0 < input_dropout < 1:
+        model.add(Dropout(input_dropout))
 
-    for size in layers_size[1:]:
+    model.add(Dense(
+        hidden_layers_size[0],
+        input_shape=(input_shape,),
+        activation='tanh',
+        kernel_regularizer=l2(reg_strength)
+    ))
+
+    for size in hidden_layers_size[1:]:
         model.add(Dense(
             size,
+            activation='tanh',
             kernel_regularizer=l2(reg_strength),
         ))
 
-    compile_attrs['loss'] = compile_attrs.get('loss', 'mae')
-    model.compile(**compile_attrs)
+    model.add(Dense(input_shape, kernel_regularizer=l2(reg_strength)))
     return model
 
 
-def build_matrix_autoencoder(input_length, input_shape, layers_size, 
-                             reg_strength=0.01, dropout_fraction=0.1, **compile_attrs):
-    
-    def create_autoencoder(layers_size, reg_strength, dropout_fraction):
-        model = Sequential()
-        model.add(Dropout(dropout_fraction))
-        for layer_size in layers_size[:-1]:
-            model.add(Dense(layer_size, activation='tanh', kernel_regularizer=l2(reg_strength)))
-        model.add(Dense(layers_size[-1], kernel_regularizer=l2(reg_strength)))
-        return model
+def build_autoencoder(create_params, compile_params):
+    """
+    Creates and builds autoencoder model with `create_params` used for call create_autoencoder
+    If `compile_params` has not `loss` then `mae` would be used for training
+    """
+    model = create_autoencoder(**create_params)
 
-    inputs = [Input(shape=(input_shape,)) for i in range(input_length)]
+    compile_params['loss'] = compile_params.get('loss', 'mae')
+    model.compile(**compile_params)
 
-    models = [create_autoencoder(layers_size, reg_strength, dropout_fraction) for i in range(input_length)]
+    return model
+
+
+def build_matrix_autoencoder(input_length, create_params, compile_params):
+    """
+    Builds autoencoder with hidden layers of size `hidden_layers_size` for every feature vector in Matrix
+    Automatically adds last layer to be with size `input_shape`
+    """
+
+    inputs = [Input(shape=(create_params['input_shape'],)) for i in range(input_length)]
+
+    models = [create_autoencoder(**create_params) for i in range(input_length)]
     
     outputs = [model(inputs[i]) for i, model in enumerate(models)]
 
     final_model = Model(inputs=inputs, outputs=outputs)
-    compile_attrs['loss'] = compile_attrs.get('loss', 'mae')
-    final_model.compile(**compile_attrs)
+    compile_params['loss'] = compile_params.get('loss', 'mae')
+    final_model.compile(**compile_params)
 
     return final_model
