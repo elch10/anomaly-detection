@@ -5,9 +5,9 @@ from keras.models import Model
 import keras
 import numpy as np
 
-def create_autoencoder(input_shape, hidden_layers_size, reg_strength=0.01, input_dropout=0.1):
+def create_autoencoder(input_shape, hidden_layer_size, reg_strength=0.01, input_dropout=0.1):
     """
-    Creates autoencoder model with hidden layers of size `hidden_layers_size`
+    Creates autoencoder model with hidden layer of size `hidden_layer_size`
     Automatically adds last layer to be with size `input_shape`
     If `input_dropout` is in range [0, 1] then would be added Dropout on input data with `input_dropout` rate
     """
@@ -17,18 +17,18 @@ def create_autoencoder(input_shape, hidden_layers_size, reg_strength=0.01, input
         model.add(Dropout(input_dropout))
 
     model.add(Dense(
-        hidden_layers_size[0],
+        hidden_layer_size,
         input_shape=(input_shape,),
-        activation='tanh',
+        # activation='tanh',
         kernel_regularizer=l2(reg_strength)
     ))
 
-    for size in hidden_layers_size[1:]:
-        model.add(Dense(
-            size,
-            activation='tanh',
-            kernel_regularizer=l2(reg_strength),
-        ))
+    # for size in hidden_layers_size[1:]:
+    #     model.add(Dense(
+    #         size,
+    #         activation='tanh',
+    #         kernel_regularizer=l2(reg_strength),
+    #     ))
 
     model.add(Dense(input_shape, kernel_regularizer=l2(reg_strength)))
     return model
