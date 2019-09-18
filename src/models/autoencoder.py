@@ -5,10 +5,11 @@ from keras.models import Model
 import keras
 import numpy as np
 
-def create_autoencoder(input_shape, hidden_layer_size, reg_strength=0.01, input_dropout=0.1):
+def create_autoencoder(input_shape, hidden_layer_size, 
+                       hidden_layer_activation=None,
+                       reg_strength=0.01, input_dropout=0.1):
     """
     Creates autoencoder model with hidden layer of size `hidden_layer_size`
-    Automatically adds last layer to be with size `input_shape`
     If `input_dropout` is in range [0, 1] then would be added Dropout on input data with `input_dropout` rate
     """
     model = Sequential()
@@ -19,16 +20,9 @@ def create_autoencoder(input_shape, hidden_layer_size, reg_strength=0.01, input_
     model.add(Dense(
         hidden_layer_size,
         input_shape=(input_shape,),
-        # activation='tanh',
+        activation=hidden_layer_activation,
         kernel_regularizer=l2(reg_strength)
     ))
-
-    # for size in hidden_layers_size[1:]:
-    #     model.add(Dense(
-    #         size,
-    #         activation='tanh',
-    #         kernel_regularizer=l2(reg_strength),
-    #     ))
 
     model.add(Dense(input_shape, kernel_regularizer=l2(reg_strength)))
     return model
@@ -49,8 +43,7 @@ def build_autoencoder(create_params, compile_params):
 
 def build_matrix_autoencoder(input_length, create_params, compile_params):
     """
-    Builds autoencoder with hidden layers of size `hidden_layers_size` for every feature vector in Matrix
-    Automatically adds last layer to be with size `input_shape`
+    Builds several autoencoders each used for every feature vector in Matrix
     """
 
     inputs = [Input(shape=(create_params['input_shape'],)) for i in range(input_length)]
