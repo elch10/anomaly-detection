@@ -1,8 +1,6 @@
-from sklearn.model_selection import TimeSeriesSplit
-
 import numpy as np
-
-from itertools import product
+from sklearn.model_selection import TimeSeriesSplit
+from sklearn.metrics import recall_score
 
 def cross_validate(model_fn, n_splits, fit_params, X, y):
     tssplit = TimeSeriesSplit(n_splits=3)
@@ -26,38 +24,23 @@ def inverse_ids(ids, rng):
     return [i for i in range(rng) if i not in ids]
 
 
-def generate_anomalies(length):
-    """
-    Generates different types of one dimensional anomalies with length `window_length`
-    """
-    anomalies = [
-        np.zeros(length), *[
-            np.random.randint(2, 4) * np.sin(k * np.linspace(0, 2 * np.pi, num=length))
-            for k in range(1, 20)
-        ]
-    ]
-    return np.array(anomalies)
+def find_anomaly(differences, treshold):
+    return np.where(differences > treshold)[0]
 
+def compute_diff(model, X, y):
+    prediction = model.predict(X)
+    return np.abs(y-prediction).sum(axis=2).sum(axis=1)
 
-def insert_anomalies(X, amount, axis=None):
+def intersection_over_true(max_len, anom_idxs, anom_lens, pred_idxs, prediction_len):
     """
-    Inserts anomalies in `X` to the specified `axis`. If `axis` is None, then last dimension will be choosed
-    Returns indexes where anomalies was inserted
+    Recall
     """
-    assert len(X.shape) > 1
+    really_anom_segment = np.zeros(max_len)
+    for left, l in zip(anom_idxs, anom_lens):
+        really_anom_segment[left:left+l] = 1
     
-    if axis != None:
-        X = np.swapaxes(X, len(X.shape)-1, axis)
+    pred_anom_segment = np.zeros(max_len)
+    for left in pred_idxs:
+        pred_anom_segment[left:left+prediction_len] = 1
 
-    anomalies = generate_anomalies(X.shape[-1])
-
-    all_idxs = np.array(list(product(*[range(x) for x in X.shape[:-1]])))
-    anom_idxs = np.random.choice(len(all_idxs), amount, replace=False)
-    anom_types = np.random.choice(len(anomalies), amount)
-    
-    X[list(zip(*all_idxs[anom_idxs]))] = anomalies[anom_types]
-
-    if axis != None:
-        X = np.swapaxes(X, len(X.shape)-1, axis)
-
-    return X, all_idxs[anom_idxs]
+    return recall_score(really_anom_segment, pred_anom_segment)

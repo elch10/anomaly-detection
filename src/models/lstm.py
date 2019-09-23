@@ -18,14 +18,16 @@ def build_model(input_length, input_shape, lstm_layers_size,
     ))
 
     for size in lstm_layers_size[1:]:
-        # model.add(Dropout(dropout_coeff))
+        if 0 < dropout_coeff < 1:
+            model.add(Dropout(dropout_coeff))
+        
         model.add(LSTM(
             size,
             return_sequences=True,
             kernel_regularizer=l2(reg_strength),
         ))
 
-    model.add(TimeDistributed(Dense(input_shape)))
+    model.add(TimeDistributed(Dense(input_shape, kernel_regularizer=l2(reg_strength))))
 
     model.compile(loss="mae", **compile_attrs)
     return model
