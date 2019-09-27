@@ -7,7 +7,7 @@ def generate_anomalies(length):
     """
     anomalies = [
         np.zeros(length), *[
-            np.random.randint(2, 4) * np.sin(k * np.linspace(0, 2 * np.pi, num=length))
+            np.random.randint(1, 4) * np.sin(k * np.linspace(0, 2 * np.pi, num=length))
             for k in range(1, 20)
         ]
     ]

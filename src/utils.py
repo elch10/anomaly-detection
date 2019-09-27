@@ -30,7 +30,7 @@ def compute_diff(model, X, y):
     prediction = model.predict(X)
     return np.abs(y-prediction).sum(axis=2).sum(axis=1)
 
-def recall_all_tresh(window_diffs, anom_idxs, window_length):
+def recall_all_tresh(window_diffs, true_idxs, window_length):
     recalls = []
     pred_anom_segment = np.zeros(len(window_diffs), dtype=int)
 
@@ -41,23 +41,22 @@ def recall_all_tresh(window_diffs, anom_idxs, window_length):
         pred_anom_segment[start_idx:start_idx + window_length] = 1
 
         recall = (
-            (anom_idxs == pred_anom_segment) &
-            (anom_idxs == 1)).sum() / anom_idxs.sum()
+            (true_idxs == pred_anom_segment) &
+            (true_idxs == 1)).sum() / true_idxs.sum()
         recalls.append(recall)
 
     return treshs, recalls
 
-from sklearn.metrics import recall_score
-def intersection_over_true(max_len, anom_idxs, anom_lens, pred_idxs, prediction_len):
+def intersection_over_true(max_len, anom_start_idxs, anom_lens, pred_idxs, window_length, score_function):
     """
     Recall
     """
     really_anom_segment = np.zeros(max_len)
-    for left, l in zip(anom_idxs, anom_lens):
+    for left, l in zip(anom_start_idxs, anom_lens):
         really_anom_segment[left:left+l] = 1
     
     pred_anom_segment = np.zeros(max_len)
     for left in pred_idxs:
-        pred_anom_segment[left:left+prediction_len] = 1
+        pred_anom_segment[left:left+window_length] = 1
 
-    return recall_score(really_anom_segment, pred_anom_segment)
+    return score_function(really_anom_segment, pred_anom_segment)
