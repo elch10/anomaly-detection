@@ -21,19 +21,36 @@ class DensityRatioEstimation:
         self.Y_te = None
         self.k = None
     
-    def build(self, Y_re, Y_te, eps=0.001, min_delta=0.01, iterations=20):
+    @staticmethod
+    def _feasibility(alphas, b):
+        alphas = alphas + (1 - b.dot(alphas)) * b / (b.T.dot(b))
+        alphas = np.maximum(0, alphas)
+        alphas = alphas / (b.T.dot(alphas))
+        return alphas
+
+    @staticmethod
+    def _compute_b(Y_rf, Y_te, sigma):
+        n_rf = Y_rf.shape[0]
+        b = np.zeros(n_rf)
+        for l in range(n_rf):
+            b[l] = 1 / n_rf * np.sum([gaussian_kernel_function(Y_rf[i], Y_te[l], sigma)
+                                      for i in range(n_rf)])
+        return b
+
+
+    def build(self, Y_rf, Y_te, eps=0.001, min_delta=0.01, iterations=20):
         """
-        param `Y_re` and `Y_te` are "rolling" windows with multidimensional time-series
+        param `Y_rf` and `Y_te` are "rolling" windows with multidimensional time-series
         They need to has shape (n_rf, k, d)
+        `n_rf` need to be equal to `n_te`
         param `eps` is 'lerning_rate' for alphas
         param `min_delta` is minimal value of difference, regarded as improvement
         """
-        assert Y_re.ndim == 3 and Y_te.ndim == 3 and Y_re.shape[1] == Y_te.shape[1]
+        assert Y_rf.shape == Y_te.shape
 
         self.Y_te = Y_te
         self.k = Y_te.shape[1]
 
-        n_rf = Y_re.shape[0]
         n_te = Y_te.shape[0]
 
         K = np.zeros((n_te, n_te))
@@ -41,10 +58,7 @@ class DensityRatioEstimation:
             for l in range(n_te):
                 K[i, l] = gaussian_kernel_function(Y_te[i], Y_te[l], self.sigma)
 
-        b = np.zeros(n_rf)
-        for l in range(n_rf):
-            b[l] = 1 / n_rf * np.sum([gaussian_kernel_function(Y_re[i], Y_te[l], self.sigma)
-                                      for i in range(n_rf)])
+        b = self._compute_b(Y_rf, Y_te, self.sigma)
 
         alphas = np.random.rand(n_te)
 
@@ -55,9 +69,7 @@ class DensityRatioEstimation:
             alphas = alphas + eps * K.T.dot((1. / K).dot(alphas))
 
             # Perform feasibility satisfaction
-            alphas = alphas + (1 - b.dot(alphas)) * b / (b.T.dot(b))
-            alphas = np.maximum(0, alphas)
-            alphas = alphas / (b.T.dot(alphas))
+            alphas = self._feasibility(alphas, b)
 
             if np.linalg.norm(alphas - prev_alphas) < min_delta:
                 break
@@ -74,18 +86,27 @@ class DensityRatioEstimation:
         Y need to has shape (n_rf, k, d)
         """
         assert Y.shape[1] == self.k and Y.ndim == 3
-        # with Pool(cpu_count()) as p:
-        #     ratios = p.map(_helper, zip([self]*Y.shape[0], Y))
-        ratios = []
-        for row in Y:
-            ratios.append(self._compute_ratio_one_window(row))
-        return ratios
+        
+        with Pool(cpu_count()) as p:
+            ratios = p.map(_helper, zip([self]*Y.shape[0], Y))
+        
+        # In original paper we just return computed ratios
+        # But it is seems as error, because it's somewhat confusing
+        return 1. / np.array(ratios) 
     
     def compute_ratios(self, df):
         """
         df need to be the shape (len, d)
         """
         return self.compute_ratios_window(rolling_window(df, self.k))
+
+    def update_by_new_sample(self, y):
+        """
+        `y` is the new sample at the time `n_te` + `k`
+        y must have shape (d,)
+        """
+
+        
     
 def _helper(args):
     return args[0]._compute_ratio_one_window(args[1])
