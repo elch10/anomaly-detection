@@ -2,12 +2,12 @@
 import numpy as np
 import pandas as pd
 
-from multiprocessing import Pool, cpu_count
+from src.models.utils import *
+from .utils import gaussian_kernel_function
+
+# from multiprocessing import Pool, cpu_count
 from src.features.build_features import rolling_window
 
-
-def gaussian_kernel_function(Y1, Y2, sigma):
-    return np.exp(-np.linalg.norm(Y1 - Y2)**2 / (2 * sigma**2))
 
 def get_sequences_of_samples(Y, start_idx, n, k):
     if isinstance(Y, pd.DataFrame):
@@ -63,7 +63,7 @@ class DensityRatioEstimation:
                 K[i, l] = gaussian_kernel_function(Y_te[i], Y_te[l], self.sigma)
 
         self._compute_b()
-        self.alphas = np.random.rand(n_te)
+        self.alphas = np.random.rand(n_te) + 0.001 # for positvive values of alpha
 
         for _ in range(iterations):
             prev_alphas = self.alphas.copy()
@@ -98,11 +98,8 @@ class DensityRatioEstimation:
 
         # with Pool(cpu_count()) as p:
         #     ratios = p.map(_helper, zip([self]*Y.shape[0], Y))
-        
-        # In original paper we just return computed ratios
-        # But it is seems as error, because it's somewhat confusing
-        return 1. / np.array(ratios)
-        # return np.array(ratios)
+
+        return ratios
     
     def compute_ratios_df(self, df):
         """
@@ -120,7 +117,7 @@ class DensityRatioEstimation:
 
         new_alphas = np.zeros_like(self.alphas)
         new_alphas[:-1] = (1 - lerning_rate * reg_parameter) * self.alphas[1:]
-        new_alphas[-1] = lerning_rate / self.compute_ratio_windows(y[None, ...])
+        new_alphas[-1] = lerning_rate / self.compute_ratio_one_window(y)
         self.alphas = new_alphas
 
         self.Y_rf[:-1] = self.Y_rf[1:]
@@ -142,7 +139,7 @@ def kernel_width_selection(Y_rf, Y_te, candidates, R=3):
     """
     Selects optimal gaussian width.
     param `Y_rf` and `Y_te` are "rolling" windows
-    They need to has shape (n_rf, k, d)
+    They need to have shape (n_rf, k, d)
     """
     Y_te_copy = np.copy(Y_te)
     np.random.shuffle(Y_te_copy)
