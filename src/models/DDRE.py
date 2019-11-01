@@ -14,6 +14,26 @@ def get_sequences_of_samples(Y, start_idx, n, k):
         Y = Y.iloc
     return rolling_window(Y[start_idx : start_idx + n + k], k)
 
+def func_to_optimize(alphas, Y_te, sigma):
+    ans = 0
+    for i in range(Y_te.shape[0]):
+        ans += np.log(sum([
+            alphas[j] * gaussian_kernel_function(Y_te[i], Y_te[j], sigma)
+            for j in range(Y_te.shape[0])
+        ]))
+    return -ans
+
+def constrain(alphas, Y_rf, Y_te, sigma):
+    n_te = Y_te.shape[0]
+    n_rf = Y_rf.shape[0]
+    return sum([
+        sum([
+            alphas[l] * gaussian_kernel_function(Y_rf[i], Y_te[l], sigma)
+            for l in range(n_te)
+        ])
+        for i in range(n_rf)
+    ]) / n_rf - 1
+
 class DensityRatioEstimation:
     def __init__(self, sigma):
         self.sigma = sigma
@@ -40,7 +60,7 @@ class DensityRatioEstimation:
         self.b = b
 
 
-    def build(self, Y_rf, Y_te, eps=0.001, min_delta=0.01, iterations=20):
+    def build(self, Y_rf, Y_te, eps=0.001, min_delta=0.01, iterations=100):
         """
         param `Y_rf` and `Y_te` are "rolling" windows with multidimensional time-series
         They need to has shape (n_rf, k, d)
@@ -75,6 +95,37 @@ class DensityRatioEstimation:
 
             if np.linalg.norm(self.alphas - prev_alphas) < min_delta:
                 break
+
+    def build_scipy(self, Y_rf, Y_te, tol=0.001):
+        # assert Y_rf.shape == Y_te.shape
+
+        self.Y_rf = Y_rf
+        self.Y_te = Y_te
+        self.k = Y_te.shape[1]
+
+        n_te = Y_te.shape[0]
+        n_rf = Y_rf.shape[0]
+
+        from scipy.optimize import minimize
+
+        res = minimize(
+            fun=func_to_optimize, 
+            x0=np.random.rand(n_te) + 0.001, 
+            args=(Y_te, self.sigma),
+            bounds=[(0, np.inf) for _ in range(n_te)],
+            constraints=(
+                dict(
+                    type='eq',
+                    fun=constrain,
+                    args=(Y_rf, Y_te, self.sigma)
+                )
+            ),
+            tol=tol,
+        )
+        
+        if not res.success:
+            raise ArithmeticError(res.message)
+        self.alphas = res.x
         
 
     def compute_ratio_one_window(self, Y):
@@ -157,7 +208,8 @@ def kernel_width_selection(Y_rf, Y_te, candidates, R=3):
             J_r[r] = np.mean(np.log(ratios))
         J[i] = np.mean(J_r)
     
+    J[np.isnan(J)] = -np.inf
     optimal_idx = np.argmax(J)
-    return candidates[optimal_idx]
+    return J, candidates[optimal_idx]
 
 
