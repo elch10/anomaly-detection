@@ -71,8 +71,8 @@ class DensityRatioEstimation:
         """
         assert Y_rf.shape == Y_te.shape
 
-        self.Y_rf = Y_rf
-        self.Y_te = Y_te
+        self.Y_rf = Y_rf.copy()
+        self.Y_te = Y_te.copy()
         self.k = Y_te.shape[1]
 
         n_te = Y_te.shape[0]
@@ -186,13 +186,20 @@ def _helper(args):
     return args[0].compute_ratio_one_window(args[1])
 
 
-def kernel_width_selection(Y_rf, Y_te, candidates, R=3):
+def kernel_width_selection(Y, candidates, R=4):
     """
     Selects optimal gaussian width.
-    param `Y_rf` and `Y_te` are "rolling" windows
-    They need to have shape (n_rf, k, d)
+    param `Y` is a "rolling" window. It musts have shape of (n, k, d)
+    param `R` characterize the size of each split chunk. The `n` must be divisible by `2 * R - 1`
+    The first chunk would be used as reference sample. And others `R-1` as test in cross-validation
     """
-    Y_te_copy = np.copy(Y_te)
+    n = Y.shape[0]
+    assert n % (2 * R - 1) == 0
+
+    chunk_size = n // (2 * R - 1)
+    
+    Y_rf = Y[:(R - 1) * chunk_size]
+    Y_te_copy = np.copy(Y[(R - 1) * chunk_size:])
     np.random.shuffle(Y_te_copy)
     Y_te_arrays = np.split(Y_te_copy, R)
 
@@ -208,8 +215,62 @@ def kernel_width_selection(Y_rf, Y_te, candidates, R=3):
             J_r[r] = np.mean(np.log(ratios))
         J[i] = np.mean(J_r)
     
-    J[np.isnan(J)] = -np.inf
-    optimal_idx = np.argmax(J)
+    optimal_idx = np.nanargmax(J)
     return J, candidates[optimal_idx]
 
+def ddre_ratios(Y,
+                sigma_candidates,
+                n_sigma,
+                R,
+                n_rf_te,
+                build_args={},
+                update_args={},
+                tresh=None,
+                verbose=False):
+    """
+    Computes ratios over all `Y` with shape (n, k, d)
+    param `sigma_candidates` and `R` used in `kernel_width_selection`. Refer there for documentation
+    param `n_sigma` is the number of first examples used to find optimal sigma
+    param `n_rf_te` characterizes size of reference and test samples. They are equal due matrix multiplication
+    by transposed itself (number of rows and columns must be equal)
+    param `verbose` characterize whether to print progress every procent
+    param
+    
+    Returns:
+    `ratios`
+    `change_points` - indexes of changing. This is not empty if you specified right `tresh`
+    """
+    J, optimal_sigma = kernel_width_selection(Y[:n_sigma], sigma_candidates, R)
+    print(f'Optimal sigma is: {optimal_sigma}')
 
+    n = Y.shape[0]
+
+    ratios = np.zeros(n)
+    change_points = []
+    t = n_rf_te + n_rf_te
+
+    while t + 1 < n:
+        dre = DensityRatioEstimation(optimal_sigma)
+        dre.build(Y[t - n_rf_te - n_rf_te:t - n_rf_te], Y[t - n_rf_te:t], **build_args)
+
+        while t + 1 < n:
+            if verbose and (t % (n // 100) == 0):
+                print(f'{t // (n // 100)}%')
+            dre.update_by_new_sample(Y[t], **update_args)
+            ratios[t] = dre.compute_likelihood_ratio()
+            t += 1
+            if (tresh is not None) and (ratios[t - 1] > tresh):
+                change_points.append(t - 1)
+                t += n_rf + n_te - 1
+                break
+
+    return ratios, change_points
+
+
+def ddre_ratios_df(df, k, *args, **kwargs):
+    """
+    Forms "rolling windows" with size `k` for using by function `ddre_ratios`.
+    For all needed arguments refer to function `ddre_ratios`
+    """
+    Y = rolling_window(df, k)
+    return ddre_ratios(Y, *args, **kwargs)
