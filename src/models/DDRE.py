@@ -1,6 +1,8 @@
 # Implementation of Direct Density-Ratio Estimation (see referehces/kawahara2009.pdf)
 import numpy as np
 import pandas as pd
+from numba import jitclass 
+from numba import int32, float32 
 
 from src.models.utils import *
 from .utils import gaussian_kernel_function
@@ -34,29 +36,44 @@ def constrain(alphas, Y_rf, Y_te, sigma):
         for i in range(n_rf)
     ]) / n_rf - 1
 
+
+_spec = [
+    ('sigma', float32),
+    ('Y_rf', float32[:, :, :]),
+    ('Y_te', float32[:, :, :]),
+    ('k', int32),
+    ('alphas', float32[:]),
+    ('b', float32[:])
+]
+
+@jitclass(_spec)
 class DensityRatioEstimation:
     def __init__(self, sigma):
         self.sigma = sigma
-        self.Y_rf = None
-        self.Y_te = None
-        self.k = None
-        self.alphas = None
-        self.b = None
+        self.Y_rf = np.array([[[0.]]], dtype=np.float32)
+        self.Y_te = np.array([[[0.]]], dtype=np.float32)
+        self.k = 0
+        self.alphas = np.array([0.], dtype=np.float32)
+        self.b = np.array([0.], dtype=np.float32)
     
     def _feasibility(self):
         """
         Performs feasibility satisfaction
         """
-        self.alphas = self.alphas + (1 - self.b.T.dot(self.alphas)) * self.b / (self.b.T.dot(self.b))
+        a = (1 - np.dot(self.b.T, self.alphas)) * self.b
+        a /= (np.dot(self.b.T, self.b))
+        self.alphas += a
         self.alphas = np.maximum(0, self.alphas)
-        self.alphas = self.alphas / (self.b.T.dot(self.alphas))
+        self.alphas = self.alphas / np.dot(self.b.T, self.alphas)
 
     def _compute_b(self):
         n_rf = self.Y_rf.shape[0]
-        b = np.zeros(n_rf)
+        b = np.zeros(n_rf, dtype=np.float32)
         for l in range(n_rf):
-            b[l] = np.sum([gaussian_kernel_function(self.Y_rf[i], self.Y_te[l], self.sigma)
-                           for i in range(n_rf)]) / n_rf
+            s = 0.
+            for i in range(n_rf):
+                s += gaussian_kernel_function(self.Y_rf[i], self.Y_te[l], self.sigma)
+            b[l] = s / n_rf
         self.b = b
 
 
@@ -71,25 +88,26 @@ class DensityRatioEstimation:
         """
         assert Y_rf.shape == Y_te.shape
 
-        self.Y_rf = Y_rf.copy()
-        self.Y_te = Y_te.copy()
+        self.Y_rf = Y_rf.astype(np.float32)
+        self.Y_te = Y_te.astype(np.float32)
         self.k = Y_te.shape[1]
 
         n_te = Y_te.shape[0]
 
-        K = np.zeros((n_te, n_te))
+        K = np.zeros((n_te, n_te), dtype=np.float32)
         for i in range(n_te):
             for l in range(n_te):
                 K[i, l] = gaussian_kernel_function(Y_te[i], Y_te[l], self.sigma)
 
         self._compute_b()
-        self.alphas = np.random.rand(n_te) + 0.001 # for positvive values of alpha
+        self.alphas = np.random.rand(n_te).astype(np.float32)
 
         for _ in range(iterations):
             prev_alphas = self.alphas.copy()
 
             # Perform gradient ascent
-            self.alphas = self.alphas + eps * K.T.dot((1. / K).dot(self.alphas))
+            temp = eps * np.dot(K.T, np.dot((1. / K).astype(np.float32), self.alphas))
+            self.alphas += temp
 
             self._feasibility()
 
@@ -127,11 +145,12 @@ class DensityRatioEstimation:
             raise ArithmeticError(res.message)
         self.alphas = res.x
         
-
     def compute_ratio_one_window(self, Y):
-        func = lambda pair: pair[0] * gaussian_kernel_function(Y, pair[1], self.sigma)
-        results = list(map(func, zip(self.alphas, self.Y_te)))
-        return sum(results)
+        res = np.zeros_like(self.alphas)
+        for i in range(self.alphas.shape[0]):
+            res[i] = gaussian_kernel_function(Y, self.Y_te[i], self.sigma)
+        res *= self.alphas
+        return np.sum(res)
 
     def compute_likelihood_ratio(self):
         return np.sum(np.log(self.compute_ratio_windows(self.Y_te)))
@@ -142,10 +161,10 @@ class DensityRatioEstimation:
         """
         assert Y.shape[1] == self.k and Y.ndim == 3
         
-        ratios = np.zeros(Y.shape[0])
+        ratios = np.zeros(Y.shape[0], dtype=np.float32)
 
-        for i, sample in enumerate(Y):
-            ratios[i] = self.compute_ratio_one_window(sample)
+        for i in range(Y.shape[0]):
+            ratios[i] = self.compute_ratio_one_window(Y[i])
 
         # with Pool(cpu_count()) as p:
         #     ratios = p.map(_helper, zip([self]*Y.shape[0], Y))
@@ -256,12 +275,18 @@ def ddre_ratios(Y,
         while t + 1 < n:
             if verbose and (t % (n // 100) == 0):
                 print(f'{t // (n // 100)}%')
-            dre.update_by_new_sample(Y[t], **update_args)
+            
+            # numba can't compile this
+            # dre.update_by_new_sample(Y[t], **update_args)
+            # so hardcode this
+            dre.update_by_new_sample(Y[t], update_args['lerning_rate'], update_args['reg_parameter'])
+
+
             ratios[t] = dre.compute_likelihood_ratio()
             t += 1
             if (tresh is not None) and (ratios[t - 1] > tresh):
                 change_points.append(t - 1)
-                t += n_rf + n_te - 1
+                t += n_rf_te + n_rf_te - 1
                 break
 
     return ratios, change_points
