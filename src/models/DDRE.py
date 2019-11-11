@@ -2,9 +2,9 @@
 import numpy as np
 import pandas as pd
 from numba import jitclass 
-from numba import int32, float32 
+from numba import int32, float32
+import math
 
-from src.models.utils import *
 from .utils import gaussian_kernel_function
 
 # from multiprocessing import Pool, cpu_count
@@ -259,6 +259,7 @@ def ddre_ratios(Y,
     `ratios`
     `change_points` - indexes of changing. This is not empty if you specified right `tresh`
     """
+    print('Finding optimal sigma...')
     J, optimal_sigma = kernel_width_selection(Y[:n_sigma], sigma_candidates, R)
     print(f'Optimal sigma is: {optimal_sigma}')
 
@@ -268,13 +269,15 @@ def ddre_ratios(Y,
     change_points = []
     t = n_rf_te + n_rf_te
 
+    one_percent_size = math.ceil(n / 100)
+
     while t + 1 < n:
         dre = DensityRatioEstimation(optimal_sigma)
         dre.build(Y[t - n_rf_te - n_rf_te:t - n_rf_te], Y[t - n_rf_te:t], **build_args)
 
         while t + 1 < n:
-            if verbose and (t % (n // 100) == 0):
-                print(f'{t // (n // 100)}%')
+            if verbose and (t % one_percent_size == 0):
+                print(f'{t // one_percent_size}%')
             
             # numba can't compile this
             # dre.update_by_new_sample(Y[t], **update_args)
