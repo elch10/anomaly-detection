@@ -10,6 +10,7 @@ from .utils import gaussian_kernel_function
 # from multiprocessing import Pool, cpu_count
 from src.features.build_features import rolling_window
 
+from sklearn.cluster import AgglomerativeClustering
 
 def get_sequences_of_samples(Y, start_idx, n, k):
     if isinstance(Y, pd.DataFrame):
@@ -205,7 +206,7 @@ def _helper(args):
     return args[0].compute_ratio_one_window(args[1])
 
 
-def kernel_width_selection(Y, candidates, R=4):
+def kernel_sigma_selection(Y, candidates, R=4):
     """
     Selects optimal gaussian width.
     param `Y` is a "rolling" window. It musts have shape of (n, k, d)
@@ -239,7 +240,7 @@ def kernel_width_selection(Y, candidates, R=4):
 
 def ddre_ratios(Y,
                 sigma_candidates,
-                n_sigma,
+                chunk_size,
                 R,
                 n_rf_te,
                 build_args={},
@@ -248,8 +249,8 @@ def ddre_ratios(Y,
                 verbose=False):
     """
     Computes ratios over all `Y` with shape (n, k, d)
-    param `sigma_candidates` and `R` used in `kernel_width_selection`. Refer there for documentation
-    param `n_sigma` is the number of first examples used to find optimal sigma
+    param `sigma_candidates` and `R` used in `kernel_sigma_selection`. Refer there for documentation
+    param `chunk_size` is the size of chunk used in cross-validation
     param `n_rf_te` characterizes size of reference and test samples. They are equal due matrix multiplication
     by transposed itself (number of rows and columns must be equal)
     param `verbose` characterize whether to print progress every procent
@@ -260,7 +261,7 @@ def ddre_ratios(Y,
     `change_points` - indexes of changing. This is not empty if you specified right `tresh`
     """
     print('Finding optimal sigma...')
-    J, optimal_sigma = kernel_width_selection(Y[:n_sigma], sigma_candidates, R)
+    J, optimal_sigma = kernel_sigma_selection(Y[:chunk_size * (2 * R - 1)], sigma_candidates, R)
     print(f'Optimal sigma is: {optimal_sigma}')
 
     n = Y.shape[0]
@@ -295,10 +296,24 @@ def ddre_ratios(Y,
     return ratios, change_points
 
 
-def ddre_ratios_df(df, k, *args, **kwargs):
+def ddre_ratios_df(df, window_width, *args, **kwargs):
     """
-    Forms "rolling windows" with size `k` for using by function `ddre_ratios`.
+    Forms "rolling windows" with size `window_width` for using by function `ddre_ratios`.
     For all needed arguments refer to function `ddre_ratios`
     """
-    Y = rolling_window(df, k)
+    Y = rolling_window(df, window_width)
     return ddre_ratios(Y, *args, **kwargs)
+
+
+def kernel_width_selection(Y, width_candidates, other_params):
+    diff_sums = []
+    for candidate in width_candidates:
+        other_params['window_width'] = candidate
+        print(f'Candidate {candidate}')
+        ratios, chng_pts = ddre_ratios_df(Y, **other_params)
+        derivative = np.abs(ratios[1:] - ratios[:-1])
+        classes = AgglomerativeClustering().fit_predict(derivative[:, None])
+        value_counts = np.bincount(classes)
+        diff_sum = np.sum((derivative[classes == value_counts.argmin()] - derivative.mean()) ** 2)
+        diff_sums.append(diff_sum)
+    return diff_sums, width_candidates[np.nanargmax(diff_sums)]
