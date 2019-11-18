@@ -6,37 +6,9 @@ from numba import int32, float32
 import math
 
 from .utils import gaussian_kernel_function
-
-# from multiprocessing import Pool, cpu_count
 from src.features.build_features import rolling_window
 
 from sklearn.cluster import AgglomerativeClustering
-
-def get_sequences_of_samples(Y, start_idx, n, k):
-    if isinstance(Y, pd.DataFrame):
-        Y = Y.iloc
-    return rolling_window(Y[start_idx : start_idx + n + k], k)
-
-def func_to_optimize(alphas, Y_te, sigma):
-    ans = 0
-    for i in range(Y_te.shape[0]):
-        ans += np.log(sum([
-            alphas[j] * gaussian_kernel_function(Y_te[i], Y_te[j], sigma)
-            for j in range(Y_te.shape[0])
-        ]))
-    return -ans
-
-def constrain(alphas, Y_rf, Y_te, sigma):
-    n_te = Y_te.shape[0]
-    n_rf = Y_rf.shape[0]
-    return sum([
-        sum([
-            alphas[l] * gaussian_kernel_function(Y_rf[i], Y_te[l], sigma)
-            for l in range(n_te)
-        ])
-        for i in range(n_rf)
-    ]) / n_rf - 1
-
 
 _spec = [
     ('sigma', float32),
@@ -114,37 +86,6 @@ class DensityRatioEstimation:
 
             if np.linalg.norm(self.alphas - prev_alphas) < min_delta:
                 break
-
-    def build_scipy(self, Y_rf, Y_te, tol=0.001):
-        # assert Y_rf.shape == Y_te.shape
-
-        self.Y_rf = Y_rf
-        self.Y_te = Y_te
-        self.k = Y_te.shape[1]
-
-        n_te = Y_te.shape[0]
-        n_rf = Y_rf.shape[0]
-
-        from scipy.optimize import minimize
-
-        res = minimize(
-            fun=func_to_optimize, 
-            x0=np.random.rand(n_te) + 0.001, 
-            args=(Y_te, self.sigma),
-            bounds=[(0, np.inf) for _ in range(n_te)],
-            constraints=(
-                dict(
-                    type='eq',
-                    fun=constrain,
-                    args=(Y_rf, Y_te, self.sigma)
-                )
-            ),
-            tol=tol,
-        )
-        
-        if not res.success:
-            raise ArithmeticError(res.message)
-        self.alphas = res.x
         
     def compute_ratio_one_window(self, Y):
         res = np.zeros_like(self.alphas)
@@ -166,9 +107,6 @@ class DensityRatioEstimation:
 
         for i in range(Y.shape[0]):
             ratios[i] = self.compute_ratio_one_window(Y[i])
-
-        # with Pool(cpu_count()) as p:
-        #     ratios = p.map(_helper, zip([self]*Y.shape[0], Y))
 
         return ratios
     
@@ -304,16 +242,29 @@ def ddre_ratios_df(df, window_width, *args, **kwargs):
     Y = rolling_window(df, window_width)
     return ddre_ratios(Y, *args, **kwargs)
 
-
 def kernel_width_selection(Y, width_candidates, other_params):
+    """
+    Finds appropriate width of rolling window
+    param `Y` - data with shape (n, d)
+    param `width_candidates` - probable candidates for choosing width
+    param `other_params` - params that would be passed to `ddre_ratios_df` function
+    """
     diff_sums = []
     for candidate in width_candidates:
         other_params['window_width'] = candidate
         print(f'Candidate {candidate}')
-        ratios, chng_pts = ddre_ratios_df(Y, **other_params)
+        ratios, _ = ddre_ratios_df(Y, **other_params)
+
         derivative = np.abs(ratios[1:] - ratios[:-1])
+        derivative[np.isinf(derivative)] = np.max(derivative[np.isfinite(derivative)])
+        derivative[np.isnan(derivative)] = np.nanmean(derivative)
+
         classes = AgglomerativeClustering().fit_predict(derivative[:, None])
+
         value_counts = np.bincount(classes)
-        diff_sum = np.sum((derivative[classes == value_counts.argmin()] - derivative.mean()) ** 2)
+        normal_pts = derivative[classes == value_counts.argmax()]
+        chng_pts = derivative[classes == value_counts.argmin()]
+        
+        diff_sum = np.sum((chng_pts - normal_pts.mean()) ** 2)
         diff_sums.append(diff_sum)
     return diff_sums, width_candidates[np.nanargmax(diff_sums)]
