@@ -132,11 +132,6 @@ class DensityRatioEstimation:
         self._compute_b()
         self._feasibility()
 
-        
-    
-def _helper(args):
-    return args[0].compute_ratio_one_window(args[1])
-
 
 def kernel_sigma_selection(Y, candidates, R=4):
     """
