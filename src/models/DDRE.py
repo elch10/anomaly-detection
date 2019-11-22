@@ -109,12 +109,6 @@ class DensityRatioEstimation:
             ratios[i] = self.compute_ratio_one_window(Y[i])
 
         return ratios
-    
-    def compute_ratios_df(self, df):
-        """
-        df need to be the shape (len, d)
-        """
-        return self.compute_ratio_windows(rolling_window(df, self.k))
 
     def update_by_new_sample(self, y, lerning_rate, reg_parameter):
         """
@@ -191,8 +185,9 @@ def ddre_ratios(Y,
     param `chunk_size` is the size of chunk used in cross-validation
     param `n_rf_te` characterizes size of reference and test samples. They are equal due matrix multiplication
     by transposed itself (number of rows and columns must be equal)
+    param `build_args` and `update_args` used in model building and parameter updating
+    param `tresh` is treshold from original papaer 
     param `verbose` characterize whether to print progress every procent
-    param
     
     Returns:
     `ratios`
@@ -248,8 +243,13 @@ def kernel_width_selection(Y, width_candidates, other_params):
     param `Y` - data with shape (n, d)
     param `width_candidates` - probable candidates for choosing width
     param `other_params` - params that would be passed to `ddre_ratios_df` function
+
+    Returns tuple of elements:
+    1. Sum squared distance beetwen mean of non change-points derivatives of ratios and
+    change-points derivatives of ratios for every width candidate in `width_candidates`
+    2. Optimal width that corresponds to maximal sum squared distance
     """
-    diff_sums = []
+    ssds = []
     for candidate in width_candidates:
         other_params['window_width'] = candidate
         print(f'Candidate {candidate}')
@@ -262,9 +262,9 @@ def kernel_width_selection(Y, width_candidates, other_params):
         classes = AgglomerativeClustering().fit_predict(derivative[:, None])
 
         value_counts = np.bincount(classes)
-        normal_pts = derivative[classes == value_counts.argmax()]
-        chng_pts = derivative[classes == value_counts.argmin()]
+        normal_derivatives = derivative[classes == value_counts.argmax()]
+        abnormal_derivatives = derivative[classes == value_counts.argmin()]
         
-        diff_sum = np.sum((chng_pts - normal_pts.mean()) ** 2)
-        diff_sums.append(diff_sum)
-    return diff_sums, width_candidates[np.nanargmax(diff_sums)]
+        ssd = np.sum((abnormal_derivatives - normal_derivatives.mean()) ** 2)
+        ssds.append(ssd)
+    return ssds, width_candidates[np.nanargmax(ssds)]
