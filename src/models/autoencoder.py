@@ -30,7 +30,7 @@ def create_autoencoder(input_shape, hidden_layer_size,
 
 def build_autoencoder(create_params, compile_params):
     """
-    Creates and builds autoencoder model with `create_params` used for call create_autoencoder
+    Creates and builds autoencoder model with `create_params` used for call `create_autoencoder`
     If `compile_params` has not `loss` then `mae` would be used for training
     """
     model = create_autoencoder(**create_params)

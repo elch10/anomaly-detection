@@ -2,7 +2,7 @@ from keras import Sequential
 from keras.layers import LSTM, Dropout, Dense, TimeDistributed
 from keras.regularizers import l2
 
-def build_model(input_length, input_shape, lstm_layers_size,
+def lstm_model(input_length, input_shape, lstm_layers_size,
                 reg_strength=0.01, dropout_coeff=0.1, **compile_attrs):
     """
     Builds lstm model with hidden layers of size `layers_size`.
@@ -27,6 +27,7 @@ def build_model(input_length, input_shape, lstm_layers_size,
             kernel_regularizer=l2(reg_strength),
         ))
 
+    # For equivalent transformation `embeddings` to real values
     model.add(TimeDistributed(Dense(input_shape, kernel_regularizer=l2(reg_strength))))
 
     model.compile(loss="mae", **compile_attrs)
