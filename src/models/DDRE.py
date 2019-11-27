@@ -1,8 +1,7 @@
 # Implementation of Direct Density-Ratio Estimation (see referehces/kawahara2009.pdf)
 import numpy as np
 import pandas as pd
-from numba import jitclass 
-from numba import int32, float32
+from numba import jitclass, int32, float32, types
 import math
 
 from .utils import gaussian_kernel_function
@@ -12,8 +11,8 @@ from sklearn.cluster import AgglomerativeClustering
 
 _spec = [
     ('sigma', float32),
-    ('Y_rf', float32[:, :, :]),
-    ('Y_te', float32[:, :, :]),
+    ('Y_rf', types.List(float32[:, :])),
+    ('Y_te', types.List(float32[:, :])),
     ('k', int32),
     ('alphas', float32[:]),
     ('b', float32[:])
@@ -23,8 +22,8 @@ _spec = [
 class DensityRatioEstimation:
     def __init__(self, sigma):
         self.sigma = sigma
-        self.Y_rf = np.array([[[0.]]], dtype=np.float32)
-        self.Y_te = np.array([[[0.]]], dtype=np.float32)
+        self.Y_rf = [np.array([[0.]], dtype=np.float32)]
+        self.Y_te = [np.array([[0.]], dtype=np.float32)]
         self.k = 0
         self.alphas = np.array([0.], dtype=np.float32)
         self.b = np.array([0.], dtype=np.float32)
@@ -40,7 +39,7 @@ class DensityRatioEstimation:
         self.alphas = self.alphas / np.dot(self.b.T, self.alphas)
 
     def _compute_b(self):
-        n_rf = self.Y_rf.shape[0]
+        n_rf = len(self.Y_rf)
         b = np.zeros(n_rf, dtype=np.float32)
         for l in range(n_rf):
             s = 0.
@@ -61,11 +60,11 @@ class DensityRatioEstimation:
         """
         assert Y_rf.shape == Y_te.shape
 
-        self.Y_rf = Y_rf.astype(np.float32)
-        self.Y_te = Y_te.astype(np.float32)
-        self.k = Y_te.shape[1]
+        self.Y_rf = Y_rf
+        self.Y_te = Y_te
+        self.k = Y_te[0].shape[0]
 
-        n_te = Y_te.shape[0]
+        n_te = len(Y_te)
 
         K = np.zeros((n_te, n_te), dtype=np.float32)
         for i in range(n_te):
@@ -99,11 +98,14 @@ class DensityRatioEstimation:
         
     def compute_ratio_windows(self, Y):
         """
-        Y need to has shape (n_rf, k, d)
+        Y is list of numpy arrays with shape (k, d)
         """
-        assert Y.shape[1] == self.k and Y.ndim == 3
+        if (Y is None) or (not Y):
+            return np.zeros(0, dtype=np.float32)
+
+        assert Y[0].shape[0] == self.k and Y[0].ndim == 2
         
-        ratios = np.zeros(Y.shape[0], dtype=np.float32)
+        ratios = np.zeros(len(Y), dtype=np.float32)
 
         for i in range(Y.shape[0]):
             ratios[i] = self.compute_ratio_one_window(Y[i])
@@ -140,7 +142,7 @@ def kernel_sigma_selection(Y, candidates, R=4):
     param `R` characterize the size of each split chunk. The `n` must be divisible by `2 * R - 1`
     The first chunk would be used as reference sample. And others `R-1` as test in cross-validation
     """
-    n = Y.shape[0]
+    n = len(Y)
     assert n % (2 * R - 1) == 0
 
     chunk_size = n // (2 * R - 1)
@@ -175,7 +177,7 @@ def ddre_ratios(Y,
                 tresh=None,
                 verbose=False):
     """
-    Computes ratios over all `Y` with shape (n, k, d)
+    Computes ratios over all `Y` - list of arrays with shape (k, d)
     param `sigma_candidates` and `R` used in `kernel_sigma_selection`. Refer there for documentation
     param `chunk_size` is the size of chunk used in cross-validation
     param `n_rf_te` characterizes size of reference and test samples. They are equal due matrix multiplication
