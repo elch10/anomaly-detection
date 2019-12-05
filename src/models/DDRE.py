@@ -245,12 +245,12 @@ def get_abnormal_idx(ratios):
     idxs1 = np.where(classes == value_counts.argmin())[0] + 1
     idxs2 = np.where(classes == value_counts.argmax())[0] + 1
 
-    if idxs1.max() > idxs2.max():
+    if ratios_cpy[idxs1-1].max() > ratios_cpy[idxs2-1].max():
         idxs = idxs1
     else:
         idxs = idxs2
 
-    transition_points = [0] + list(np.where((idxs[1:] - idxs[:-1]) > 1)[0] + 1)
+    transition_points = [0] + list(np.where((idxs[1:] - idxs[:-1]) > 1)[0] + 1) + [ratios_cpy.shape[0]-1]
     anoms = []
     for left, right in zip(transition_points[:-1], transition_points[1:]):
         anoms.append(idxs[left] + np.argmax(ratios[idxs[left:right]]))
@@ -277,7 +277,7 @@ def kernel_width_selection(Y, width_candidates, other_params):
 
         abnormal_idxs = get_abnormal_idx(ratios)
         normal_idxs = inverse_ids(abnormal_idxs, ratios.shape[0])
-        
+
         ssd = np.sum((ratios[abnormal_idxs] - ratios[normal_idxs].mean()) ** 2)
         ssds.append(ssd)
     return ssds, width_candidates[np.nanargmax(ssds)]
