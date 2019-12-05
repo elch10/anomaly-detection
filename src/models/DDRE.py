@@ -6,9 +6,10 @@ from numba import int32, float32
 import math
 
 from .utils import gaussian_kernel_function
+from src.utils import inverse_ids
 from src.features.build_features import rolling_window
 
-from sklearn.cluster import AgglomerativeClustering
+from sklearn.cluster import AgglomerativeClustering, dbscan
 
 _spec = [
     ('sigma', float32),
@@ -232,6 +233,30 @@ def ddre_ratios_df(df, window_width, *args, **kwargs):
     Y = rolling_window(df, window_width)
     return ddre_ratios(Y, *args, **kwargs)
 
+def get_abnormal_idx(ratios):
+    ratios_cpy = ratios.copy()
+    mean = np.nanmean(ratios_cpy)
+    ratios_cpy[ratios_cpy == 0] = mean
+    ratios_cpy[-1] = mean
+    
+    classes = AgglomerativeClustering().fit_predict(ratios_cpy[:, None])
+
+    value_counts = np.bincount(classes)
+    idxs1 = np.where(classes == value_counts.argmin())[0] + 1
+    idxs2 = np.where(classes == value_counts.argmax())[0] + 1
+
+    if idxs1.max() > idxs2.max():
+        idxs = idxs1
+    else:
+        idxs = idxs2
+
+    transition_points = [0] + list(np.where((idxs[1:] - idxs[:-1]) > 1)[0] + 1)
+    anoms = []
+    for left, right in zip(transition_points[:-1], transition_points[1:]):
+        anoms.append(idxs[left] + np.argmax(ratios[idxs[left:right]]))
+    
+    return np.array(anoms)
+
 def kernel_width_selection(Y, width_candidates, other_params):
     """
     Finds appropriate width of rolling window
@@ -250,16 +275,9 @@ def kernel_width_selection(Y, width_candidates, other_params):
         print(f'Candidate {candidate}')
         ratios, _ = ddre_ratios_df(Y, **other_params)
 
-        derivative = np.abs(ratios[1:] - ratios[:-1])
-        derivative[np.isinf(derivative)] = np.max(derivative[np.isfinite(derivative)])
-        derivative[np.isnan(derivative)] = np.nanmean(derivative)
-
-        classes = AgglomerativeClustering().fit_predict(derivative[:, None])
-
-        value_counts = np.bincount(classes)
-        normal_derivatives = derivative[classes == value_counts.argmax()]
-        abnormal_derivatives = derivative[classes == value_counts.argmin()]
+        abnormal_idxs = get_abnormal_idx(ratios)
+        normal_idxs = inverse_ids(abnormal_idxs, ratios.shape[0])
         
-        ssd = np.sum((abnormal_derivatives - normal_derivatives.mean()) ** 2)
+        ssd = np.sum((ratios[abnormal_idxs] - ratios[normal_idxs].mean()) ** 2)
         ssds.append(ssd)
     return ssds, width_candidates[np.nanargmax(ssds)]
