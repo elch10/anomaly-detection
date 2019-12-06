@@ -1,7 +1,8 @@
 # Implementation of Direct Density-Ratio Estimation (see referehces/kawahara2009.pdf)
 import numpy as np
 import pandas as pd
-from numba import jitclass, int32, float32, types
+from numba import jitclass, int32, float64, types
+from numba.typed import List
 import math
 
 from .utils import gaussian_kernel_function
@@ -10,23 +11,30 @@ from src.features.build_features import rolling_window
 from sklearn.cluster import AgglomerativeClustering
 
 _spec = [
-    ('sigma', float32),
-    ('Y_rf', types.List(float32[:, :])),
-    ('Y_te', types.List(float32[:, :])),
+    ('sigma', float64),
+    ('Y_rf', types.ListType(float64[::, ::1])),
+    ('Y_te', types.ListType(float64[::, ::1])),
     ('k', int32),
-    ('alphas', float32[:]),
-    ('b', float32[:])
+    ('alphas', float64[:]),
+    ('b', float64[:])
 ]
 
 @jitclass(_spec)
 class DensityRatioEstimation:
     def __init__(self, sigma):
         self.sigma = sigma
-        self.Y_rf = [np.array([[0.]], dtype=np.float32)]
-        self.Y_te = [np.array([[0.]], dtype=np.float32)]
+
+        l = List()
+        l.append(np.array([[0.]], dtype=float64))
+        self.Y_rf = l
+
+        l = List()
+        l.append(np.array([[0.]], dtype=float64))
+        self.Y_te = l
+        
         self.k = 0
-        self.alphas = np.array([0.], dtype=np.float32)
-        self.b = np.array([0.], dtype=np.float32)
+        self.alphas = np.array([0.], dtype=np.float64)
+        self.b = np.array([0.], dtype=np.float64)
     
     def _feasibility(self):
         """
@@ -40,7 +48,7 @@ class DensityRatioEstimation:
 
     def _compute_b(self):
         n_rf = len(self.Y_rf)
-        b = np.zeros(n_rf, dtype=np.float32)
+        b = np.zeros(n_rf, dtype=np.float64)
         for l in range(n_rf):
             s = 0.
             for i in range(n_rf):
@@ -58,27 +66,34 @@ class DensityRatioEstimation:
         param `min_delta` is minimal value of difference, regarded as improvement
         param `iterations` is maximum amount of iterations used to find proper alphas
         """
-        assert Y_rf.shape == Y_te.shape
+        assert len(Y_rf) == len(Y_te)
+        assert Y_rf[0].shape == Y_te[0].shape
 
-        self.Y_rf = Y_rf
-        self.Y_te = Y_te
+        lst = List()
+        lst.extend(Y_rf)
+        self.Y_rf = lst
+
+        lst = List()
+        lst.extend(Y_te)
+        self.Y_te = lst
+
         self.k = Y_te[0].shape[0]
 
         n_te = len(Y_te)
 
-        K = np.zeros((n_te, n_te), dtype=np.float32)
+        K = np.zeros((n_te, n_te), dtype=np.float64)
         for i in range(n_te):
             for l in range(n_te):
                 K[i, l] = gaussian_kernel_function(Y_te[i], Y_te[l], self.sigma)
 
         self._compute_b()
-        self.alphas = np.random.rand(n_te).astype(np.float32)
+        self.alphas = np.random.rand(n_te).astype(np.float64)
 
         for _ in range(iterations):
             prev_alphas = self.alphas.copy()
 
             # Perform gradient ascent
-            temp = eps * np.dot(K.T, np.dot((1. / K).astype(np.float32), self.alphas))
+            temp = eps * np.dot(K.T, np.dot((1. / K).astype(np.float64), self.alphas))
             self.alphas += temp
 
             self._feasibility()
@@ -101,11 +116,11 @@ class DensityRatioEstimation:
         Y is list of numpy arrays with shape (k, d)
         """
         if (Y is None) or (not Y):
-            return np.zeros(0, dtype=np.float32)
+            return np.zeros(0, dtype=np.float64)
 
         assert Y[0].shape[0] == self.k and Y[0].ndim == 2
         
-        ratios = np.zeros(len(Y), dtype=np.float32)
+        ratios = np.zeros(len(Y), dtype=np.float64)
 
         for i in range(Y.shape[0]):
             ratios[i] = self.compute_ratio_one_window(Y[i])
@@ -148,9 +163,8 @@ def kernel_sigma_selection(Y, candidates, R=4):
     chunk_size = n // (2 * R - 1)
     
     Y_rf = Y[:(R - 1) * chunk_size]
-    Y_te_copy = np.copy(Y[(R - 1) * chunk_size:])
-    np.random.shuffle(Y_te_copy)
-    Y_te_arrays = np.split(Y_te_copy, R)
+    Y_te_copy = Y[(R - 1) * chunk_size:]
+    Y_te_arrays = [Y_te_copy[i-chunk_size:i] for i in range(chunk_size, len(Y_te_copy)+chunk_size, chunk_size)]
 
     J = np.zeros_like(candidates, dtype=float)
 
@@ -159,7 +173,7 @@ def kernel_sigma_selection(Y, candidates, R=4):
         J_r = np.zeros(R)
         for r in range(R):
             Y_te_split = Y_te_arrays[:r] + Y_te_arrays[r+1:]
-            dre.build(Y_rf, np.vstack(Y_te_split))
+            dre.build(Y_rf, sum(Y_te_split, []))
             ratios = dre.compute_ratio_windows(Y_te_arrays[r])
             J_r[r] = np.mean(np.log(ratios))
         J[i] = np.mean(J_r)
