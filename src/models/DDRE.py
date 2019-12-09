@@ -12,7 +12,7 @@ from sklearn.cluster import AgglomerativeClustering
 
 _spec = [
     ('sigma', float64),
-    ('Y_rf', types.ListType(float64[::, ::1])),
+    ('Y_rf', types.ListType(numba.typeof(np.array([[0.]])))),
     ('Y_te', types.ListType(float64[::, ::1])),
     ('k', int32),
     ('alphas', float64[:]),
@@ -73,9 +73,9 @@ class DensityRatioEstimation:
         lst.extend(Y_rf)
         self.Y_rf = lst
 
-        lst = List()
-        lst.extend(Y_te)
-        self.Y_te = lst
+        lst2 = List()
+        lst2.extend(Y_te)
+        self.Y_te = lst2
 
         self.k = Y_te[0].shape[0]
 
@@ -115,14 +115,14 @@ class DensityRatioEstimation:
         """
         Y is list of numpy arrays with shape (k, d)
         """
-        if (Y is None) or (not Y):
+        if len(Y) == 0:
             return np.zeros(0, dtype=np.float64)
 
         assert Y[0].shape[0] == self.k and Y[0].ndim == 2
         
         ratios = np.zeros(len(Y), dtype=np.float64)
 
-        for i in range(Y.shape[0]):
+        for i in range(len(Y)):
             ratios[i] = self.compute_ratio_one_window(Y[i])
 
         return ratios
@@ -134,17 +134,16 @@ class DensityRatioEstimation:
         param `lerning_rate` is the learning rate that controls the adaptation sensitivity to the new sample
         param `reg_parameter` is the regularization parameter
         """
-
         new_alphas = np.zeros_like(self.alphas)
         new_alphas[:-1] = (1 - lerning_rate * reg_parameter) * self.alphas[1:]
         new_alphas[-1] = lerning_rate / self.compute_ratio_one_window(y)
         self.alphas = new_alphas
 
-        self.Y_rf[:-1] = self.Y_rf[1:]
-        self.Y_rf[-1] = self.Y_te[0]
+        self.Y_rf.pop(0)
+        self.Y_rf.append(self.Y_te[0])
         
-        self.Y_te[:-1] = self.Y_te[1:]
-        self.Y_te[-1] = y
+        self.Y_te.pop(0)
+        self.Y_te.append(y)
 
         self._compute_b()
         self._feasibility()
@@ -208,7 +207,7 @@ def ddre_ratios(Y,
     J, optimal_sigma = kernel_sigma_selection(Y[:chunk_size * (2 * R - 1)], sigma_candidates, R)
     print(f'Optimal sigma is: {optimal_sigma}')
 
-    n = Y.shape[0]
+    n = len(Y)
 
     ratios = np.zeros(n)
     change_points = []
