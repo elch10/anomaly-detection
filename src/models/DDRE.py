@@ -139,6 +139,9 @@ def kernel_sigma_selection(Y, candidates, R=4):
     param `R` characterize the number of each split chunks. The `n` must be divisible by `2 * R - 1`
     The first chunk would be used as reference sample. And others `R-1` as test in cross-validation
     """
+    if len(candidates) == 1:
+        return 0, candidates[0]
+        
     n = Y.shape[0]
     assert n % (2 * R - 1) == 0
 
