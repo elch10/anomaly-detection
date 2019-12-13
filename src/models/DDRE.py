@@ -1,7 +1,7 @@
 # Implementation of Direct Density-Ratio Estimation (see referehces/kawahara2009.pdf)
 import numpy as np
 import pandas as pd
-from numba import jitclass, int32, float32
+from numba import jitclass, int32, float64, int64
 import math
 
 from .utils import gaussian_kernel_function
@@ -11,23 +11,32 @@ from src.features.build_features import rolling_window
 from scipy.signal import find_peaks
 
 _spec = [
-    ('sigma', float32),
-    ('Y_rf', float32[:, :, :]),
-    ('Y_te', float32[:, :, :]),
+    ('sigma', float64),
+    ('Y', float64[:, :]),
     ('k', int32),
-    ('alphas', float32[:]),
-    ('b', float32[:])
+    ('window_width', int64),
+    ('last_procceed', int64),
+    ('n_rf_te', int32),
+    ('alphas', float64[:]),
+    ('b', float64[:])
 ]
 
 @jitclass(_spec)
 class DensityRatioEstimation:
-    def __init__(self, sigma):
+    def __init__(self, sigma, window_width, n_rf_te):
         self.sigma = sigma
-        self.Y_rf = np.array([[[0.]]], dtype=np.float32)
-        self.Y_te = np.array([[[0.]]], dtype=np.float32)
-        self.k = 0
-        self.alphas = np.array([0.], dtype=np.float32)
-        self.b = np.array([0.], dtype=np.float32)
+        self.Y = np.array([[0.]], dtype=np.float64)
+        self.window_width = window_width
+        self.last_procceed = 0
+        self.n_rf_te = n_rf_te
+        self.alphas = np.array([0.], dtype=np.float64)
+        self.b = np.array([0.], dtype=np.float64)
+
+    def get_rf(self, shift):
+        return self.Y[self.last_procceed + shift : self.last_procceed + self.window_width + shift]
+
+    def get_te(self, shift):
+        return self.get_rf(self.n_rf_te + self.window_width - 1 + shift)
     
     def _feasibility(self):
         """
@@ -40,46 +49,37 @@ class DensityRatioEstimation:
         self.alphas = self.alphas / np.dot(self.b.T, self.alphas)
 
     def _compute_b(self):
-        n_rf = self.Y_rf.shape[0]
-        b = np.zeros(n_rf, dtype=np.float32)
-        for l in range(n_rf):
+        b = np.zeros(self.n_rf_te, dtype=np.float64)
+        for l in range(self.n_rf_te):
             s = 0.
-            for i in range(n_rf):
-                s += gaussian_kernel_function(self.Y_rf[i], self.Y_te[l], self.sigma)
-            b[l] = s / n_rf
+            for i in range(self.n_rf_te):
+                s += gaussian_kernel_function(self.get_rf(i), self.get_te(l), self.sigma)
+            b[l] = s / self.n_rf_te
         self.b = b
 
-
-    def build(self, Y_rf, Y_te, eps=0.001, min_delta=0.01, iterations=100):
+    def build(self, Y, eps=0.001, min_delta=0.01, iterations=100):
         """
-        param `Y_rf` and `Y_te` are "rolling" windows with multidimensional time-series
-        They need to has shape (n_rf, k, d)
-        `n_rf` need to be equal to `n_te`
+        param `Y` is a multidimensional time-series with shape (n, d)
         param `eps` is 'lerning_rate' for alphas
         param `min_delta` is minimal value of difference, regarded as improvement
         param `iterations` is maximum amount of iterations used to find proper alphas
         """
-        assert Y_rf.shape == Y_te.shape
+        self.Y = Y
+        n_rf_te = np.int64(self.n_rf_te)
 
-        self.Y_rf = Y_rf.astype(np.float32)
-        self.Y_te = Y_te.astype(np.float32)
-        self.k = Y_te.shape[1]
-
-        n_te = Y_te.shape[0]
-
-        K = np.zeros((n_te, n_te), dtype=np.float32)
-        for i in range(n_te):
-            for l in range(n_te):
-                K[i, l] = gaussian_kernel_function(Y_te[i], Y_te[l], self.sigma)
+        K = np.zeros((n_rf_te, n_rf_te), dtype=np.float64)
+        for i in range(n_rf_te):
+            for l in range(n_rf_te):
+                K[i, l] = gaussian_kernel_function(self.get_te(i), self.get_te(l), self.sigma)
 
         self._compute_b()
-        self.alphas = np.random.rand(n_te).astype(np.float32)
+        self.alphas = np.random.rand(n_rf_te).astype(np.float64)
 
         for _ in range(iterations):
             prev_alphas = self.alphas.copy()
 
             # Perform gradient ascent
-            temp = eps * np.dot(K.T, np.dot((1. / K).astype(np.float32), self.alphas))
+            temp = eps * np.dot(K.T, np.dot((1. / K).astype(np.float64), self.alphas))
             self.alphas += temp
 
             self._feasibility()
@@ -90,75 +90,73 @@ class DensityRatioEstimation:
     def compute_ratio_one_window(self, Y):
         res = np.zeros_like(self.alphas)
         for i in range(self.alphas.shape[0]):
-            res[i] = gaussian_kernel_function(Y, self.Y_te[i], self.sigma)
+            res[i] = gaussian_kernel_function(Y, self.get_te(i), self.sigma)
         res *= self.alphas
         return np.sum(res)
 
     def compute_likelihood_ratio(self):
-        return np.sum(np.log(self.compute_ratio_windows(self.Y_te)))
+        ratios = np.zeros(self.n_rf_te, dtype=np.float64)
+        for i in range(self.n_rf_te):
+            ratios[i] = self.compute_ratio_one_window(self.get_te(i))
+        return np.sum(np.log(ratios))
         
     def compute_ratio_windows(self, Y):
         """
-        Y need to has shape (n_rf, k, d)
+        Y need to has shape (n + window_width, d)
         """
-        assert Y.shape[1] == self.k and Y.ndim == 3
+        ratios = np.zeros(Y.shape[0] - self.window_width, dtype=np.float64)
+
+        for i in range(self.window_width, Y.shape[0]):
+            ratios[i-self.window_width] = self.compute_ratio_one_window(Y[i-self.window_width:i])
         
-        ratios = np.zeros(Y.shape[0], dtype=np.float32)
-
-        for i in range(Y.shape[0]):
-            ratios[i] = self.compute_ratio_one_window(Y[i])
-
         return ratios
 
-    def update_by_new_sample(self, y, lerning_rate, reg_parameter):
+    def update_by_next_sample(self, lerning_rate, reg_parameter):
         """
-        `y` is the new rolling window from the time (n_te + 1) to (n_te + 1 + k)
-        param `y` must have shape (k, d)
+        Updates model by using next sample from data
         param `lerning_rate` is the learning rate that controls the adaptation sensitivity to the new sample
         param `reg_parameter` is the regularization parameter
         """
+        if self.last_procceed + 2 * self.n_rf_te + 2 * self.window_width - 2 == self.Y.shape[0]:
+            raise IndexError("Cannot update by next sample. Last sample already was used")
+
+        self.last_procceed += 1
 
         new_alphas = np.zeros_like(self.alphas)
         new_alphas[:-1] = (1 - lerning_rate * reg_parameter) * self.alphas[1:]
-        new_alphas[-1] = lerning_rate / self.compute_ratio_one_window(y)
+        new_alphas[-1] = lerning_rate / self.compute_ratio_one_window(self.get_te(self.n_rf_te))
         self.alphas = new_alphas
-
-        self.Y_rf[:-1] = self.Y_rf[1:]
-        self.Y_rf[-1] = self.Y_te[0]
-        
-        self.Y_te[:-1] = self.Y_te[1:]
-        self.Y_te[-1] = y
 
         self._compute_b()
         self._feasibility()
 
-def kernel_sigma_selection(Y, candidates, R=4):
+def kernel_sigma_selection(df, window_width, candidates, R=4):
     """
     Selects optimal gaussian width.
-    param `Y` is a "rolling" window. It musts have shape of (n, k, d)
+    param `df` is a "rolling" window. It musts have shape of (n, d), n>=window_width
     param `R` characterize the number of each split chunks. The `n` must be divisible by `2 * R - 1`
     The first chunk would be used as reference sample. And others `R-1` as test in cross-validation
     """
     if len(candidates) == 1:
         return 0, candidates[0]
-        
-    n = Y.shape[0]
+
+    n = df.shape[0] - 2 * window_width
     assert n % (2 * R - 1) == 0
 
     chunk_size = n // (2 * R - 1)
     
-    Y_rf = Y[:(R - 1) * chunk_size]
-    Y_te_arrays = np.split(Y[(R - 1) * chunk_size:], R)
+    Y_rf = df[:(R - 1) * chunk_size + window_width]
+    Y_te_arrays = df[(R - 1) * chunk_size + window_width:]
 
     J = np.zeros_like(candidates, dtype=float)
 
-    for i, width in enumerate(candidates):
-        dre = DensityRatioEstimation(width)
+    for i, sigma in enumerate(candidates):
+        dre = DensityRatioEstimation(sigma, window_width, chunk_size * (R - 1))
         J_r = np.zeros(R)
         for r in range(R):
-            Y_te_split = Y_te_arrays[:r] + Y_te_arrays[r+1:]
-            dre.build(Y_rf, np.vstack(Y_te_split))
-            ratios = dre.compute_ratio_windows(Y_te_arrays[r])
+            Y_ = np.concatenate((Y_rf, np.vstack((Y_te_arrays[:r*chunk_size+window_width], Y_te_arrays[(r+1)*chunk_size+window_width:]))), axis=0)
+            dre.build(Y_)
+            ratios = dre.compute_ratio_windows(Y_te_arrays[r*chunk_size: (r+1)*chunk_size+window_width])
             J_r[r] = np.mean(np.log(ratios))
         J[i] = np.mean(J_r)
     
@@ -195,8 +193,8 @@ def ddre_ratios(df,
     if isinstance(df, pd.DataFrame):
         df = df.to_numpy()
 
-    data = df[:chunk_size * (2 * R - 1) + window_width]
-    J, optimal_sigma = kernel_sigma_selection(rolling_window(data, window_width), sigma_candidates, R)
+    data = df[:chunk_size * (2 * R - 1) + 2 * window_width]
+    J, optimal_sigma = kernel_sigma_selection(data, window_width, sigma_candidates, R)
     print(f'Optimal sigma is: {optimal_sigma}')
 
     n = df.shape[0]
@@ -208,20 +206,17 @@ def ddre_ratios(df,
     one_percent_size = math.ceil(n / 100)
 
     while t + 1 < n:
-        dre = DensityRatioEstimation(optimal_sigma)
-        rf_end = t - n_rf_te - window_width
-        Y_rf = df[rf_end - n_rf_te - window_width:rf_end]
-        Y_te = df[rf_end:t]
-        dre.build(rolling_window(Y_rf, window_width), rolling_window(Y_te, window_width), **build_args)
+        dre = DensityRatioEstimation(optimal_sigma, window_width, n_rf_te)
+        dre.build(df, **build_args)
 
         while t + 1 < n:
             if verbose and (t % one_percent_size == 0):
                 print(f'{t // one_percent_size}%')
             
             # numba can't compile this
-            # dre.update_by_new_sample(Y[t], **update_args)
+            # dre.update_by_next_sample(Y[t], **update_args)
             # so hardcode this
-            dre.update_by_new_sample(df[t-window_width:t], update_args['lerning_rate'], update_args['reg_parameter'])
+            dre.update_by_next_sample(update_args['lerning_rate'], update_args['reg_parameter'])
 
 
             ratios[t] = dre.compute_likelihood_ratio()
