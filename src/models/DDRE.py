@@ -1,15 +1,13 @@
 # Implementation of Direct Density-Ratio Estimation (see referehces/kawahara2009.pdf)
 import numpy as np
 import pandas as pd
-from numba import jitclass 
-from numba import int32, float32
+from numba import jitclass, int32, float32
 import math
 
 from .utils import gaussian_kernel_function
 from src.utils import inverse_ids
 from src.features.build_features import rolling_window
 
-from sklearn.cluster import AgglomerativeClustering, dbscan
 from scipy.signal import find_peaks
 
 _spec = [
@@ -134,12 +132,11 @@ class DensityRatioEstimation:
         self._compute_b()
         self._feasibility()
 
-
 def kernel_sigma_selection(Y, candidates, R=4):
     """
     Selects optimal gaussian width.
     param `Y` is a "rolling" window. It musts have shape of (n, k, d)
-    param `R` characterize the size of each split chunk. The `n` must be divisible by `2 * R - 1`
+    param `R` characterize the number of each split chunks. The `n` must be divisible by `2 * R - 1`
     The first chunk would be used as reference sample. And others `R-1` as test in cross-validation
     """
     n = Y.shape[0]
@@ -148,9 +145,7 @@ def kernel_sigma_selection(Y, candidates, R=4):
     chunk_size = n // (2 * R - 1)
     
     Y_rf = Y[:(R - 1) * chunk_size]
-    Y_te_copy = np.copy(Y[(R - 1) * chunk_size:])
-    np.random.shuffle(Y_te_copy)
-    Y_te_arrays = np.split(Y_te_copy, R)
+    Y_te_arrays = np.split(Y[(R - 1) * chunk_size:], R)
 
     J = np.zeros_like(candidates, dtype=float)
 
@@ -167,7 +162,8 @@ def kernel_sigma_selection(Y, candidates, R=4):
     optimal_idx = np.nanargmax(J)
     return J, candidates[optimal_idx]
 
-def ddre_ratios(Y,
+def ddre_ratios(df,
+                window_width,
                 sigma_candidates,
                 chunk_size,
                 R,
@@ -177,7 +173,8 @@ def ddre_ratios(Y,
                 tresh=None,
                 verbose=False):
     """
-    Computes ratios over all `Y` with shape (n, k, d)
+    Computes ratios over all `df` with shape (n, d)
+    param `window_width` is a width of rolling window
     param `sigma_candidates` and `R` used in `kernel_sigma_selection`. Refer there for documentation
     param `chunk_size` is the size of chunk used in cross-validation
     param `n_rf_te` characterizes size of reference and test samples. They are equal due matrix multiplication
@@ -187,24 +184,32 @@ def ddre_ratios(Y,
     param `verbose` characterize whether to print progress every procent
     
     Returns:
-    `ratios`
+    `ratios` - is a computed ratios of probability densities
     `change_points` - indexes of changing. This is not empty if you specified right `tresh`
     """
     print('Finding optimal sigma...')
-    J, optimal_sigma = kernel_sigma_selection(Y[:chunk_size * (2 * R - 1)], sigma_candidates, R)
+
+    if isinstance(df, pd.DataFrame):
+        df = df.to_numpy()
+
+    data = df[:chunk_size * (2 * R - 1) + window_width]
+    J, optimal_sigma = kernel_sigma_selection(rolling_window(data, window_width), sigma_candidates, R)
     print(f'Optimal sigma is: {optimal_sigma}')
 
-    n = Y.shape[0]
+    n = df.shape[0]
 
     ratios = np.zeros(n)
     change_points = []
-    t = n_rf_te + n_rf_te
+    t = n_rf_te * 2 + window_width * 2
 
     one_percent_size = math.ceil(n / 100)
 
     while t + 1 < n:
         dre = DensityRatioEstimation(optimal_sigma)
-        dre.build(Y[t - n_rf_te - n_rf_te:t - n_rf_te], Y[t - n_rf_te:t], **build_args)
+        rf_end = t - n_rf_te - window_width
+        Y_rf = df[rf_end - n_rf_te - window_width:rf_end]
+        Y_te = df[rf_end:t]
+        dre.build(rolling_window(Y_rf, window_width), rolling_window(Y_te, window_width), **build_args)
 
         while t + 1 < n:
             if verbose and (t % one_percent_size == 0):
@@ -213,7 +218,7 @@ def ddre_ratios(Y,
             # numba can't compile this
             # dre.update_by_new_sample(Y[t], **update_args)
             # so hardcode this
-            dre.update_by_new_sample(Y[t], update_args['lerning_rate'], update_args['reg_parameter'])
+            dre.update_by_new_sample(df[t-window_width:t], update_args['lerning_rate'], update_args['reg_parameter'])
 
 
             ratios[t] = dre.compute_likelihood_ratio()
@@ -224,15 +229,6 @@ def ddre_ratios(Y,
                 break
 
     return ratios, change_points
-
-
-def ddre_ratios_df(df, window_width, *args, **kwargs):
-    """
-    Forms "rolling windows" with size `window_width` for using by function `ddre_ratios`.
-    For all needed arguments refer to function `ddre_ratios`
-    """
-    Y = rolling_window(df, window_width)
-    return ddre_ratios(Y, *args, **kwargs)
 
 def kernel_width_selection(Y, width_candidates, other_params):
     """
@@ -250,7 +246,7 @@ def kernel_width_selection(Y, width_candidates, other_params):
     for candidate in width_candidates:
         other_params['window_width'] = candidate
         print(f'Candidate {candidate}')
-        ratios, _ = ddre_ratios_df(Y, **other_params)
+        ratios, _ = ddre_ratios(Y, **other_params)
 
         abnormal_idxs, _ = find_peaks(ratios, distance=candidate)
         normal_idxs = inverse_ids(abnormal_idxs, ratios.shape[0])
