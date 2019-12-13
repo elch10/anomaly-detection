@@ -6,6 +6,6 @@ def rolling_window(data, window_length, shift=0):
         data = data.to_numpy()
 
     return np.array([
-        data[i - window_length:i].flatten()
+        data[i - window_length:i].ravel()
         for i in range(window_length + shift, data.shape[0])
     ]).reshape(-1, window_length, data.shape[1])
