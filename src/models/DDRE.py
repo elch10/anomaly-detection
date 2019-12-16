@@ -14,7 +14,7 @@ from src.utils import inverse_ids
 from src.features.build_features import rolling_window
 
 
-cpu_cnt = cpu_count()
+cpu_cnt = 2
 
 _spec = [
     ('sigma', nb.float64),
@@ -120,11 +120,12 @@ class DensityRatioEstimation:
     def update_by_next_sample(self, learning_rate, reg_parameter):
         """
         Updates model by using next sample from data
-        param `lerning_rate` is the learning rate that controls the adaptation sensitivity to the new sample
+        param `learning_rate` is the learning rate that controls the adaptation sensitivity to the new sample
         param `reg_parameter` is the regularization parameter
         """
-        if self.last_procceed + 2 * self.n_rf_te + 2 * self.window_width - 2 == self.Y.shape[0]:
-            raise IndexError("Cannot update by next sample. Last sample already was used")
+        if self.last_procceed + 2 * self.n_rf_te + 2 * self.window_width - 1 >= self.Y.shape[0]:
+            print("Cannot update by next sample. Last sample already was used")
+            return
 
         self.last_procceed += 1
 
@@ -226,17 +227,18 @@ def ddre_ratios(df,
         t = i * piece_size + n_rf_te * 2 + window_width * 2
 
         if i == pieces_cnt - 1:
-            right = n
+            right = n - 1
         else:
             right = (i+1)*piece_size
 
+        #TODO: Fix Right boundary
         while t + 1 < right:
             dre = DensityRatioEstimation(optimal_sigma, window_width, n_rf_te)
             dre.build(df[i*piece_size:right+1], eps, min_delta, iterations)
 
             while t + 1 < n:
                 if verbose and (t % one_percent_size == 0):
-                    print(t // one_percent_size, '%')
+                    print(i, t // one_percent_size, '%')
                 
                 # numba can't compile this
                 # dre.update_by_next_sample(Y[t], **update_args)
@@ -267,7 +269,7 @@ def kernel_width_selection(Y, width_candidates, other_params):
     ssds = []
     for candidate in width_candidates:
         other_params['window_width'] = candidate
-        print(f'Candidate {candidate}')
+        print('Candidate', candidate)
         ratios, _ = ddre_ratios(Y, **other_params)
 
         abnormal_idxs, _ = find_peaks(ratios, distance=candidate)
