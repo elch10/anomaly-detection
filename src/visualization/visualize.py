@@ -37,3 +37,24 @@ def plot_random(anomalies, normal, random_samples=10):
         plt.subplot(random_samples, 2, 2*i+2)
         plt.title('Random normal sample')
         plt.plot(norm)
+
+
+from bokeh.plotting import figure, output_file, show
+
+def ratios_plot(ratios, peaks, anom_start_idxs=None, anomaly_length=None, window_width=None):
+    p = figure(plot_width=800, plot_height=600, tools="xwheel_zoom,pan,box_zoom,reset")
+
+    p.line(np.arange(ratios.shape[0]), ratios, line_width=2)
+    p.scatter(peaks, ratios[peaks], fill_color="red", size=15)
+    
+    if anom_start_idxs is not None:
+        for start_idx in anom_start_idxs[:, 0]:
+            start_idx -= window_width
+            r = start_idx + anomaly_length
+            if start_idx < 0:
+                r += start_idx
+                start_idx = 0
+            x = np.arange(start_idx, start_idx+anomaly_length)
+            p.line(x, ratios[x], line_width=2, color="red")
+
+    show(p)

@@ -1,7 +1,6 @@
 # Implementation of Direct Density-Ratio Estimation (see referehces/kawahara2009.pdf)
 import math
 from multiprocessing import cpu_count
-from collections import namedtuple
 
 import numpy as np
 import pandas as pd
@@ -14,7 +13,7 @@ from src.utils import inverse_ids
 from src.features.build_features import rolling_window
 
 
-cpu_cnt = 2
+cpu_cnt = cpu_count()
 
 _spec = [
     ('sigma', nb.float64),
@@ -192,7 +191,7 @@ def ddre_ratios(df,
     by transposed itself (number of rows and columns must be equal)
     param `build_args` and `update_args` used in model building and parameter updating
     param `tresh` is treshold from original paper (if it is -1, then it is ignored)
-    param `verbose` characterize whether to print progress every procent
+    param `verbose` characterize whether to print progress every 5%
     
     Returns:
     `ratios` - is a computed ratios of probability densities
@@ -210,35 +209,31 @@ def ddre_ratios(df,
     ratios = np.zeros(n, dtype=np.float64)
     change_points = []
 
-    one_percent_size = math.ceil(n / 100)
-
+    five_percent_size = math.ceil(n / 20)
 
     piece_size = n // cpu_cnt
     pieces_cnt = (n + piece_size - 1) // piece_size
-
-    print(n_rf_te * 2 + window_width * 2)
-    print(piece_size)
-
+    
     if piece_size <= n_rf_te * 2 + window_width * 2:
         piece_size = n
         pieces_cnt = 1
-        
+    
     for i in nb.prange(pieces_cnt):
-        t = i * piece_size + n_rf_te * 2 + window_width * 2
+        start_left = i*piece_size+n_rf_te*2+window_width*2
+        t = start_left
 
         if i == pieces_cnt - 1:
             right = n - 1
         else:
             right = (i+1)*piece_size
 
-        #TODO: Fix Right boundary
         while t + 1 < right:
             dre = DensityRatioEstimation(optimal_sigma, window_width, n_rf_te)
             dre.build(df[i*piece_size:right+1], eps, min_delta, iterations)
 
-            while t + 1 < n:
-                if verbose and (t % one_percent_size == 0):
-                    print(i, t // one_percent_size, '%')
+            while t + 1 < right:
+                if verbose and (t % five_percent_size == 0):
+                    print(i, t // five_percent_size, '%')
                 
                 # numba can't compile this
                 # dre.update_by_next_sample(Y[t], **update_args)
@@ -251,6 +246,8 @@ def ddre_ratios(df,
                     change_points.append(t - 1)
                     t += n_rf_te + n_rf_te - 1
                     break
+
+        ratios[i*piece_size: start_left] = ratios[start_left+1]
 
     return ratios, change_points
 
@@ -283,3 +280,19 @@ def kernel_width_selection(Y, width_candidates, other_params):
         ssd = np.nanmean((abnormal[~np.isnan(abnormal)] - np.nanmean(ratios[normal_idxs])) ** 2)
         ssds.append(ssd)
     return ssds, width_candidates[np.nanargmax(ssds)]
+
+
+def compute_ratios(y, width_candidates, params, ratio=0.3):
+    """
+    Finds density ratios with hyperparameter search
+    """
+    print('Finding hyperparams...')
+    _, optimal = kernel_width_selection(y[:int(y.shape[0]*ratio)], width_candidates, params)
+    params['window_width'] = int(optimal)
+    print(f'\nOptimal width is {optimal}\n')
+    
+    print('Starting compute ratios...')
+    ratios, chng_pts = ddre_ratios(y, **params)
+    peaks, _ = find_peaks(ratios, distance=optimal)
+    
+    return ratios, chng_pts, peaks
