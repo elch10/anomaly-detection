@@ -266,6 +266,9 @@ def kernel_width_selection(Y, width_candidates, other_params):
     2. Optimal width that corresponds to maximal sum squared distance
     """
     ssds = []
+    if len(width_candidates) == 1:
+        return ssds, width_candidates[0]
+    
     for candidate in width_candidates:
         other_params['window_width'] = candidate
         print('Candidate', candidate)
