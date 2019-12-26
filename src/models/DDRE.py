@@ -209,16 +209,20 @@ def ddre_ratios(df,
     ratios = np.zeros(n, dtype=np.float64)
     change_points = []
 
-    five_percent_size = math.ceil(n / 20)
+    chunks = cpu_cnt
 
-    piece_size = n // cpu_cnt
+    piece_size = n // chunks
     pieces_cnt = (n + piece_size - 1) // piece_size
-    
-    if piece_size <= n_rf_te * 2 + window_width * 2:
-        piece_size = n
-        pieces_cnt = 1
-    
-    print('Computing ratios in parrallel with', pieces_cnt, 'threads')
+
+    while piece_size <= n_rf_te * 2 + window_width * 2 and chunks > 1:
+        chunks //= 2
+
+        piece_size = n // chunks
+        pieces_cnt = (n + piece_size - 1) // piece_size 
+
+
+    five_percent_size = math.ceil(piece_size / 20)
+    print('Computing ratios in parrallel with', pieces_cnt, 'chunks')
 
     for i in nb.prange(pieces_cnt):
         start_left = i*piece_size+n_rf_te*2+window_width*2
@@ -235,7 +239,7 @@ def ddre_ratios(df,
 
             while t + 1 < right:
                 if verbose and (t % five_percent_size == 0):
-                    print(i, 5 * t // five_percent_size, '%')
+                    print(i, 5 * piece_size // five_percent_size, '%')
                 
                 # numba can't compile this
                 # dre.update_by_next_sample(Y[t], **update_args)
