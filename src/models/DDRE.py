@@ -238,8 +238,8 @@ def ddre_ratios(df,
             dre.build(df[i*piece_size:right+1], eps, min_delta, iterations)
 
             while t + 1 < right:
-                if verbose and (t % five_percent_size == 0):
-                    print(i, 5 * piece_size // five_percent_size, '%')
+                if verbose and ((t - i * piece_size) % five_percent_size == 0):
+                    print(i, 5 * (t - i * piece_size) // five_percent_size, '%')
                 
                 # numba can't compile this
                 # dre.update_by_next_sample(Y[t], **update_args)
