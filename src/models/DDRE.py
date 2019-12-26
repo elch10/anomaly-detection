@@ -212,13 +212,13 @@ def ddre_ratios(df,
     chunks = cpu_cnt
 
     piece_size = n // chunks
-    pieces_cnt = (n + piece_size - 1) // piece_size
+    pieces_cnt = n // piece_size
 
     while piece_size <= n_rf_te * 2 + window_width * 2 and chunks > 1:
         chunks //= 2
 
         piece_size = n // chunks
-        pieces_cnt = (n + piece_size - 1) // piece_size 
+        pieces_cnt = n // piece_size 
 
 
     five_percent_size = math.ceil(piece_size / 20)
