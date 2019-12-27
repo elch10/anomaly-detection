@@ -8,9 +8,12 @@ from scipy.signal import find_peaks
 import numba as nb
 from sklearn.preprocessing import StandardScaler
 
-from .utils import gaussian_kernel_function
 from src.utils import inverse_ids
 from src.features.build_features import rolling_window
+
+@nb.jit(nopython=True)
+def gaussian_kernel_function(Y1, Y2, sigma):
+    return np.exp(-np.linalg.norm(Y1 - Y2)**2 / (2 * sigma**2))
 
 
 cpu_cnt = cpu_count()
@@ -212,20 +215,20 @@ def ddre_ratios(df,
     ratios = np.zeros(n, dtype=np.float64)
     change_points = []
 
-    chunks = cpu_cnt
+    chunks_ = cpu_cnt
 
-    piece_size = n // chunks
+    piece_size = n // chunks_
     pieces_cnt = n // piece_size
 
     while piece_size <= n_rf_te * 2 + window_width * 2 and chunks > 1:
-        chunks //= 2
+        chunks_ //= 2
 
-        piece_size = n // chunks
+        piece_size = n // chunks_
         pieces_cnt = n // piece_size
     
-    if chunks != -1:
-        piece_size = n
-        pieces_cnt = 1
+    if chunks > 0 and (n // chunks) > n_rf_te * 2 + window_width * 2:
+        piece_size = n // chunks
+        pieces_cnt = chunks
 
 
     five_percent_size = math.ceil(piece_size / 20)

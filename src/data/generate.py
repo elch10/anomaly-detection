@@ -7,10 +7,8 @@ def generate_anomalies(length):
     Generates different types of one dimensional anomalies with length `window_length`
     """
     anomalies = [
-        np.zeros(length), *[
-            np.random.randint(1, 4) * np.sin(k * np.linspace(0, 2 * np.pi, num=length))
-            for k in range(1, 20)
-        ]
+        np.random.randint(1, 4) * np.sin(k * np.linspace(0, 2 * np.pi, num=length))
+        for k in range(1, 20)
     ]
     return np.array(anomalies)
 
@@ -19,10 +17,12 @@ def insert_anomalies(X, amount, axis=None, anomaly_length=None):
     """
     Inserts anomalies in copy of `X` to the specified `axis`. If `axis` is `None`, then last dimension will be choosed
     param `amount` characterizes amount of anomalies needed to insert in `X`
-    param `anomaly_length` - length of anomaly. If it is `None` then anomaly will be inserted at whole `axis`
+    param `anomaly_length` - length of anomaly. If it is `None` then anomaly will be inserted at whole len of `axis`
     Returns `X` with anomalies inserted, and indexes of starting points of anomalies where they was inserted
     """
-    assert len(X.shape) > 1 and anomaly_length <= X.shape[axis if axis is not None else -1]
+    ax = axis if axis is not None else -1
+    anomaly_length = anomaly_length if anomaly_length is not None else X.shape[ax]
+    assert len(X.shape) >= 1 and anomaly_length <= X.shape[ax]
 
     if isinstance(X, pd.DataFrame):
         X = X.to_numpy()
