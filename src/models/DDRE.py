@@ -181,7 +181,8 @@ def ddre_ratios(df,
                 eps=0.001, min_delta=0.01, iterations=100,
                 learning_rate=1, reg_parameter=0.01,
                 tresh=-1,
-                verbose=False):
+                verbose=False,
+                chunks=-1):
     """
     Computes ratios over all `df` with shape (n, d). It need to be the numpy array, not pd.DataFrame!
     param `window_width` is a width of rolling window
@@ -189,9 +190,11 @@ def ddre_ratios(df,
     param `chunk_size` is the size of chunk used in cross-validation
     param `n_rf_te` characterizes size of reference and test samples. They are equal due matrix multiplication
     by transposed itself (number of rows and columns must be equal)
-    param `build_args` and `update_args` used in model building and parameter updating
+    param `eps`, `min_delta`, `iteratios` used in DDRE building
+    param `learning_rate`, `reg_parameter` used in parameter updating of DDRE model
     param `tresh` is treshold from original paper (if it is -1, then it is ignored)
     param `verbose` characterize whether to print progress every 5%
+    param `chunks` is the number of threads used for computation. If it is equal to `-1` then amount of chunks would be seleceted automaticly
     
     Returns:
     `ratios` - is a computed ratios of probability densities
@@ -218,7 +221,11 @@ def ddre_ratios(df,
         chunks //= 2
 
         piece_size = n // chunks
-        pieces_cnt = n // piece_size 
+        pieces_cnt = n // piece_size
+    
+    if chunks != -1:
+        piece_size = n
+        pieces_cnt = 1
 
 
     five_percent_size = math.ceil(piece_size / 20)
