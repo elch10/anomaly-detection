@@ -84,7 +84,7 @@ def find_optimal_tresh(model, X, y, anoms_dataset_shape, window_length, predicti
     param `X` and `y` is the normal data, on which `model` was trained
     """
     anom_dataset = np.random.randn(*anoms_dataset_shape)
-    anom, idxs = insert_anomalies(anom_dataset, anoms_dataset_shape[1] if len(anoms_dataset_shape) > 1 else 1, axis=0)
+    anom, _ = insert_anomalies(anom_dataset, np.prod(anoms_dataset_shape[1:]) if len(anoms_dataset_shape) > 1 else 1, axis=0)
 
     X_anom = rolling_window(anom, window_length)[:-prediction_len]
 
