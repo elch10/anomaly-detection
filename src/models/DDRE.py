@@ -140,20 +140,23 @@ class DensityRatioEstimation:
         self._feasibility()
 
 @nb.njit(parallel=True)
-def kernel_sigma_selection(df, window_width, candidates, R=4):
+def kernel_sigma_selection(df, window_width, candidates, chunk_size, R=3):
     """
-    Selects optimal gaussian width.
-    param `df` is a "rolling" window. It musts have shape of (n, d), n>=window_width
-    param `R` characterize the number of each split chunks. The `n` must be divisible by `2 * R - 1`
+    Selects optimal gaussian width (standard deviation).
+    param `df` is a dataframe with shape (n, d)
+    param `window_width` is the setted rolling window size
+    param `candidates` is the candidates from which will be found optimal sigma
+    param `chunk_size` is the size of chunk used in cross-validation
+    param `R` characterize the number of each split chunk in cross_validation
     The first chunk would be used as reference sample. And others `R-1` as test in cross-validation
     """
     if len(candidates) == 1:
         return np.zeros(0, dtype=np.float64), candidates[0]
 
-    n = df.shape[0] - 2 * window_width
-    assert n % (2 * R - 1) == 0
+    needed_n = chunk_size * (2 * R - 1) + 2 * window_width
 
-    chunk_size = n // (2 * R - 1)
+    assert needed_n <= df.shape[0]
+    df = df.copy()[:needed_n]
     
     Y_rf = df[:(R - 1) * chunk_size + window_width]
     Y_te_arrays = df[(R - 1) * chunk_size + window_width:]
@@ -172,15 +175,14 @@ def kernel_sigma_selection(df, window_width, candidates, R=4):
     
     J[np.isnan(J)] = -2e9
     optimal_idx = np.argmax(J)
+    print('Optimal sigma is:', candidates[optimal_idx])
     return J, candidates[optimal_idx]
 
 @nb.njit(parallel=True)
 def ddre_ratios(df,
                 window_width,
-                sigma_candidates,
-                chunk_size,
-                R,
-                n_rf_te,
+                sigma,
+                n_rf_te=32,
                 eps=0.001, min_delta=0.01, iterations=100,
                 learning_rate=1, reg_parameter=0.01,
                 tresh=-1,
@@ -189,8 +191,7 @@ def ddre_ratios(df,
     """
     Computes ratios over all `df` with shape (n, d). It need to be the numpy array, not pd.DataFrame!
     param `window_width` is a width of rolling window
-    param `sigma_candidates` and `R` used in `kernel_sigma_selection`. Refer there for documentation
-    param `chunk_size` is the size of chunk used in cross-validation
+    param `sigma` is the standard deviation of gaussian kernel function
     param `n_rf_te` characterizes size of reference and test samples. They are equal due matrix multiplication
     by transposed itself (number of rows and columns must be equal)
     param `eps`, `min_delta`, `iteratios` used in DDRE building
@@ -203,13 +204,6 @@ def ddre_ratios(df,
     `ratios` - is a computed ratios of probability densities
     `change_points` - indexes of changing. This is not empty if you specified right `tresh`
     """
-    # print('Finding optimal sigma...')
-
-    data = df[:chunk_size * (2 * R - 1) + 2 * window_width]
-    
-    J, optimal_sigma = kernel_sigma_selection(data, window_width, sigma_candidates, R)
-    print('Optimal sigma is:', optimal_sigma)
-
     n = df.shape[0]
 
     ratios = np.zeros(n, dtype=np.float64)
@@ -220,13 +214,16 @@ def ddre_ratios(df,
     piece_size = n // chunks_
     pieces_cnt = n // piece_size
 
-    while piece_size <= n_rf_te * 2 + window_width * 2 and chunks > 1:
+    # set minimal piece length to two minimal lengths needed for DDRE
+    minimal_length = 2 * (n_rf_te * 2 + window_width * 2)
+
+    while piece_size <= minimal_length and chunks_ > 1:
         chunks_ //= 2
 
         piece_size = n // chunks_
         pieces_cnt = n // piece_size
     
-    if chunks > 0 and (n // chunks) > n_rf_te * 2 + window_width * 2:
+    if chunks > 0 and (n // chunks) >= minimal_length:
         piece_size = n // chunks
         pieces_cnt = chunks
 
@@ -244,7 +241,7 @@ def ddre_ratios(df,
             right = (i+1)*piece_size
 
         while t + 1 < right:
-            dre = DensityRatioEstimation(optimal_sigma, window_width, n_rf_te)
+            dre = DensityRatioEstimation(sigma, window_width, n_rf_te)
             dre.build(df[i*piece_size:right+1], eps, min_delta, iterations)
 
             while t + 1 < right:
@@ -267,28 +264,49 @@ def ddre_ratios(df,
 
     return ratios, change_points
 
-def kernel_width_selection(Y, width_candidates, other_params):
+def kernel_width_selection(Y, additional_params, DDRE_params):
     """
     Finds appropriate width of rolling window
     param `Y` - data with shape (n, d)
-    param `width_candidates` - probable candidates for choosing width
-    param `other_params` - params that would be passed to `ddre_ratios_df` function
+    param `additional_params` - params for finding window width and sigma
+    param `DDRE_params` - params that would be passed to `ddre_ratios` function
 
     Returns tuple of elements:
     1. Sum squared distance beetwen mean of non change-points derivatives of ratios and
     change-points derivatives of ratios for every width candidate in `width_candidates`
     2. Optimal width that corresponds to maximal sum squared distance
+    3. Optimal sigma
     """
     ssds = []
+    optimal_sigmas = []
+    width_candidates = additional_params['width_candidates']
+
+    sigma_candidates = additional_params['sigma_candidates']
+    chunk_size = additional_params['chunk_size']
+    R = additional_params.get('R', 3)
+
     if len(width_candidates) == 1:
-        return ssds, width_candidates[0]
-    
+        _, optimal_sigma = kernel_sigma_selection(Y, width_candidates[0], sigma_candidates,
+                                                  chunk_size, R)
+        return ssds, width_candidates[0], optimal_sigma
+
     for candidate in width_candidates:
-        other_params['window_width'] = candidate
+        DDRE_params['window_width'] = candidate
         print('Candidate', candidate)
-        ratios, _ = ddre_ratios(Y, **other_params)
+        
+        _, optimal_sigma = kernel_sigma_selection(Y, candidate, sigma_candidates,
+                                                  chunk_size, R)
+        DDRE_params['sigma'] = optimal_sigma
+        optimal_sigmas.append(optimal_sigma)
+
+        n = chunk_size * (2 * R - 1) + 2 * candidate
+        ratios, _ = ddre_ratios(Y[:n], **DDRE_params)
 
         abnormal_idxs, _ = find_peaks(ratios, distance=candidate)
+
+        # Use only 5 biggest
+        abnormal_idxs = sorted(abnormal_idxs, key=lambda idx:abs(ratios[idx]))[-5:]
+
         normal_idxs = inverse_ids(abnormal_idxs, ratios.shape[0])
 
         scaled = StandardScaler().fit_transform(ratios[ratios.nonzero()[0], None]).ravel()
@@ -298,20 +316,23 @@ def kernel_width_selection(Y, width_candidates, other_params):
 
         ssd = np.nanmean((abnormal[~np.isnan(abnormal)] - np.nanmean(ratios[normal_idxs])) ** 2)
         ssds.append(ssd)
-    return ssds, width_candidates[np.nanargmax(ssds)]
+
+    return ssds, width_candidates[np.nanargmax(ssds)], optimal_sigmas[np.nanargmax(ssds)]
 
 
-def compute_ratios(y, width_candidates, params, ratio=0.3):
+def compute_ratios(y, additional_params, DDRE_params):
     """
     Finds density ratios with hyperparameter search
     """
     print('Finding hyperparams...')
-    _, optimal = kernel_width_selection(y[:int(y.shape[0]*ratio)], width_candidates, params)
-    params['window_width'] = int(optimal)
-    print(f'\nOptimal width is {optimal}\n')
+    _, window_width, sigma = kernel_width_selection(y, additional_params, DDRE_params)
+    print(f'\nOptimal width is {window_width}\n')
+
+    DDRE_params['window_width'] = window_width
+    DDRE_params['sigma'] = sigma
     
     print('Starting compute ratios...')
-    ratios, chng_pts = ddre_ratios(y, **params)
-    peaks, _ = find_peaks(ratios, distance=optimal)
+    ratios, chng_pts = ddre_ratios(y, **DDRE_params)
+    peaks, _ = find_peaks(ratios, distance=window_width)
     
     return ratios, chng_pts, peaks
