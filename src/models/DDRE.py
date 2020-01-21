@@ -147,7 +147,7 @@ def kernel_sigma_selection(df, window_width, candidates, chunk_size, R=3):
     param `window_width` is the setted rolling window size
     param `candidates` is the candidates from which will be found optimal sigma
     param `chunk_size` is the size of chunk used in cross-validation
-    param `R` characterize the number of each split chunk in cross_validation
+    param `R` characterize the number of splits in cross_validation
     The first chunk would be used as reference sample. And others `R-1` as test in cross-validation
     """
     if len(candidates) == 1:
@@ -192,8 +192,7 @@ def ddre_ratios(df,
     Computes ratios over all `df` with shape (n, d). It need to be the numpy array, not pd.DataFrame!
     param `window_width` is a width of rolling window
     param `sigma` is the standard deviation of gaussian kernel function
-    param `n_rf_te` characterizes size of reference and test samples. They are equal due matrix multiplication
-    by transposed itself (number of rows and columns must be equal)
+    param `n_rf_te` characterizes the number of reference and test samples
     param `eps`, `min_delta`, `iteratios` used in DDRE building
     param `learning_rate`, `reg_parameter` used in parameter updating of DDRE model
     param `tresh` is treshold from original paper (if it is -1, then it is ignored)
@@ -264,7 +263,12 @@ def ddre_ratios(df,
 
     return ratios, change_points
 
-def kernel_width_selection(Y, additional_params, DDRE_params):
+def find_abnormal_idxs(ratios, window_width, amount=3):
+    abnormal_idxs, _ = find_peaks(ratios, distance=window_width)
+    abnormal_idxs = sorted(abnormal_idxs, key=lambda idx:abs(ratios[idx]))[-amount:]
+    return abnormal_idxs
+
+def kernel_width_selection(Y, search_params, DDRE_params):
     """
     Finds appropriate width of rolling window
     param `Y` - data with shape (n, d)
@@ -279,11 +283,11 @@ def kernel_width_selection(Y, additional_params, DDRE_params):
     """
     ssds = []
     optimal_sigmas = []
-    width_candidates = additional_params['width_candidates']
+    width_candidates = search_params['width_candidates']
 
-    sigma_candidates = additional_params['sigma_candidates']
-    chunk_size = additional_params['chunk_size']
-    R = additional_params.get('R', 3)
+    sigma_candidates = search_params['sigma_candidates']
+    chunk_size = search_params['chunk_size']
+    R = search_params.get('R', 3)
 
     if len(width_candidates) == 1:
         _, optimal_sigma = kernel_sigma_selection(Y, width_candidates[0], sigma_candidates,
@@ -302,11 +306,7 @@ def kernel_width_selection(Y, additional_params, DDRE_params):
         n = chunk_size * (2 * R - 1) + 2 * candidate
         ratios, _ = ddre_ratios(Y[:n], **DDRE_params)
 
-        abnormal_idxs, _ = find_peaks(ratios, distance=candidate)
-
-        # Use only 5 biggest
-        abnormal_idxs = sorted(abnormal_idxs, key=lambda idx:abs(ratios[idx]))[-5:]
-
+        abnormal_idxs = find_abnormal_idxs(ratios, candidate)
         normal_idxs = inverse_ids(abnormal_idxs, ratios.shape[0])
 
         scaled = StandardScaler().fit_transform(ratios[ratios.nonzero()[0], None]).ravel()
@@ -320,12 +320,12 @@ def kernel_width_selection(Y, additional_params, DDRE_params):
     return ssds, width_candidates[np.nanargmax(ssds)], optimal_sigmas[np.nanargmax(ssds)]
 
 
-def compute_ratios(y, additional_params, DDRE_params):
+def compute_ratios(y, search_params, DDRE_params):
     """
     Finds density ratios with hyperparameter search
     """
     print('Finding hyperparams...')
-    _, window_width, sigma = kernel_width_selection(y, additional_params, DDRE_params)
+    _, window_width, sigma = kernel_width_selection(y, search_params, DDRE_params)
     print(f'\nOptimal width is {window_width}\n')
 
     DDRE_params['window_width'] = window_width
@@ -333,6 +333,6 @@ def compute_ratios(y, additional_params, DDRE_params):
     
     print('Starting compute ratios...')
     ratios, chng_pts = ddre_ratios(y, **DDRE_params)
-    peaks, _ = find_peaks(ratios, distance=window_width)
+    peaks = find_abnormal_idxs(ratios, window_width)
     
     return ratios, chng_pts, peaks
