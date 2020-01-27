@@ -247,9 +247,6 @@ def ddre_ratios(df,
                 if verbose and ((t - i * piece_size) % five_percent_size == 0):
                     print(i, 5 * (t - i * piece_size) // five_percent_size, '%')
                 
-                # numba can't compile this
-                # dre.update_by_next_sample(Y[t], **update_args)
-                # so hardcode this
                 dre.update_by_next_sample(learning_rate, reg_parameter)
 
                 ratios[t] = dre.compute_likelihood_ratio()
@@ -259,7 +256,7 @@ def ddre_ratios(df,
                     t += n_rf_te + n_rf_te - 1
                     break
 
-        ratios[i*piece_size: start_left] = ratios[start_left+1]
+        ratios[i*piece_size: start_left] = np.mean(ratios[start_left+1:right])
 
     return ratios, change_points
 
@@ -322,7 +319,8 @@ def kernel_width_selection(Y, search_params, DDRE_params):
 
 def compute_ratios(y, search_params, DDRE_params):
     """
-    Finds density ratios with hyperparameter search
+    Finds density ratios with hyperparameter search.
+    Optimal values will be added to DDRE_params dictionary.
     """
     print('Finding hyperparams...')
     _, window_width, sigma = kernel_width_selection(y, search_params, DDRE_params)
