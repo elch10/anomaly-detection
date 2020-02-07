@@ -239,11 +239,11 @@ def ddre_ratios(df,
         else:
             right = (i+1)*piece_size
 
-        while t + 1 < right:
+        while t < right:
             dre = DensityRatioEstimation(sigma, window_width, n_rf_te)
             dre.build(df[i*piece_size:right+1], eps, min_delta, iterations)
 
-            while t + 1 < right:
+            while t < right:
                 if verbose and ((t - i * piece_size) % five_percent_size == 0):
                     print(i, 5 * (t - i * piece_size) // five_percent_size, '%')
                 
