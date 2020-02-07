@@ -35,9 +35,9 @@ DDRE_params = dict(
 
 ratios, chng_pts, peaks = compute_ratios(data.to_numpy(), DDRE_search_params, DDRE_params)
 
-np.save('ratios-%s.npy' % (timestr, ), ratios)
-np.save('chng_pts-%s.npy' % (timestr, ), chng_pts)
-np.save('peaks-%s.npy' % (timestr, ), peaks)
+np.save('result/ratios-%s.npy' % (timestr, ), ratios)
+np.save('result/chng_pts-%s.npy' % (timestr, ), chng_pts)
+np.save('result/peaks-%s.npy' % (timestr, ), peaks)
 
 
 window_length=64
@@ -83,4 +83,4 @@ for i, (left, right) in enumerate(zip(boundaries[:-1], boundaries[1:])):
     for i in start_idxs:
         anom_idxs.extend(range(i+left, i+left+window_length))
 
-np.save('anom_idxs-%s.npy' % (timestr, ), anom_idxs)
+np.save('result/anom_idxs-%s.npy' % (timestr, ), anom_idxs)
