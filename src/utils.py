@@ -2,6 +2,9 @@ import numpy as np
 from sklearn.model_selection import TimeSeriesSplit
 
 def cross_validate(model_fn, n_splits, fit_params, X, y):
+    """
+    Cross validates time-series data.
+    """
     tssplit = TimeSeriesSplit(n_splits=3)
     results = []
 

@@ -1,7 +1,10 @@
 import matplotlib.pyplot as plt
 import numpy as np
 
-def visualize_result(results, suptitle):
+def visualize_cv_result(results, suptitle):
+    """
+    Visualizes results of cross validation, that was gotten from `utils.cross_validate`
+    """
     plt.figure(figsize=(5 * len(results), 5))
     plt.suptitle(suptitle)
 
