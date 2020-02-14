@@ -7,7 +7,7 @@ from keras.regularizers import l2
 from ..data.generate import insert_anomalies
 from ..features.build_features import rolling_window
 
-def lstm_model(input_length, input_shape, lstm_layers_size,
+def lstm_model(input_length, input_shape, lstm_layers_size, loss='mae',
                 reg_strength=0.01, dropout_coeff=0.1, **compile_attrs):
     """
     Builds lstm model with hidden layers of size `layers_size`.
@@ -34,18 +34,24 @@ def lstm_model(input_length, input_shape, lstm_layers_size,
 
     # For equivalent transformation `embeddings` to real values
     model.add(TimeDistributed(Dense(input_shape, kernel_regularizer=l2(reg_strength))))
-
-    model.compile(loss="mae", **compile_attrs)
+    model.compile(loss, **compile_attrs)
     return model
 
 def find_anomaly(differences, treshold):
     return np.where(differences > treshold)[0]
 
+
+def fit_generator(X, y, batch_size=64):
+    while True:
+        idxs = np.random.randint(len(X), size=batch_size)
+        yield np.take(X, idxs, axis=0), np.take(y, idxs, axis=0)
+
+def predict_generator(X, batch_size=64):
+    for i in range(0, len(X), batch_size):
+        yield np.array(X[i:i+batch_size])
+
 def compute_diff(model, X, y):
-    def predict_generator():
-        for i in range(0, len(X), 64):
-            yield np.array(X[i:i+64])
-    prediction = model.predict_generator(predict_generator(), steps=(len(X)+64-1)//64)
+    prediction = model.predict_generator(predict_generator(X), steps=(len(X)+64-1)//64)
     return np.abs(y-prediction).sum(axis=2).sum(axis=1)
 
 def recall_of_tresh(window_diffs, true_idxs, window_length):

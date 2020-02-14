@@ -8,12 +8,6 @@ import keras
 import time
 timestr = time.strftime("%Y%m%d-%H%M%S")
 
-def fit_generator(X, y, batch_size=64):
-    while True:
-        idxs = np.random.randint(len(X), size=batch_size)
-        yield np.take(X, idxs, axis=0), np.take(y, idxs, axis=0)
-
-
 data = pd.read_csv('data/processed/example.csv', index_col='Index')
 print(f'Len of dataset: {data.shape[0]}')
 
