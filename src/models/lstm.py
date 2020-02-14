@@ -7,11 +7,12 @@ from keras.regularizers import l2
 from ..data.generate import insert_anomalies
 from ..features.build_features import rolling_window
 
-def lstm_model(input_length, input_shape, lstm_layers_size, loss='mae',
+def lstm_model(input_length, input_shape, lstm_layers_size, optimizer,
                 reg_strength=0.01, dropout_coeff=0.1, **compile_attrs):
     """
     Builds lstm model with hidden layers of size `layers_size`.
-    Returns values with shape (input_length, input_shape)
+    Returns values with shape (input_length, input_shape).
+    Loss by default is `mae` and added to compile_attrs
     """
     model = Sequential()
 
@@ -34,7 +35,11 @@ def lstm_model(input_length, input_shape, lstm_layers_size, loss='mae',
 
     # For equivalent transformation `embeddings` to real values
     model.add(TimeDistributed(Dense(input_shape, kernel_regularizer=l2(reg_strength))))
-    model.compile(loss, **compile_attrs)
+
+    compile_attrs['optimizer'] = optimizer
+    compile_attrs['loss'] = compile_attrs.get('loss', 'mae')
+    model.compile(**compile_attrs)
+
     return model
 
 def find_anomaly(differences, treshold):

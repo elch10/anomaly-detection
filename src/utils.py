@@ -5,7 +5,7 @@ def cross_validate(model_fn, n_splits, fit_params, X, y):
     """
     Cross validates time-series data.
     """
-    tssplit = TimeSeriesSplit(n_splits=3)
+    tssplit = TimeSeriesSplit(n_splits=n_splits)
     results = []
 
     for i, (train_idx, test_idx) in enumerate(tssplit.split(X, y)):
