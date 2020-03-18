@@ -78,7 +78,7 @@ class Trainer:
                 output = self.forward(inputs)
                 loss = self.criterion(output, true)
 
-                pbar.set_postfix(loss=loss)
+                pbar.set_postfix(loss=loss.item())
                 self.running_loss.update(loss.item(), inputs.size(0))
 
                 loss.backward()
@@ -130,6 +130,6 @@ class Trainer:
 
             print()
 
-        # load best model weights
         self.epochs += num_epochs
+        # load best model weights
         self.model.load_state_dict(best_model_wts)

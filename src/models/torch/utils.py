@@ -14,6 +14,8 @@ class RunningLoss:
 
 def get_prev_states(model, batch_size):
     outs = model.outs
+    if model.cell_states is None and not outs:
+        return None
     keys = sorted(outs.keys())
     hn = []
     for key in keys:
