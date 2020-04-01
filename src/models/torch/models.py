@@ -1,5 +1,5 @@
 from collections import OrderedDict
-from .utils import RunningLoss, get_prev_states
+from .utils import RunningLoss
 import torch
 from torch.utils.tensorboard import SummaryWriter
 from tqdm import tqdm
@@ -32,6 +32,35 @@ class LSTM(torch.nn.Module):
         self.outs = None
         self.cell_states = None
 
+    def get_prev_states(self, batch_size):
+        outs = self.outs
+        if self.cell_states is None and not outs:
+            return None
+        keys = sorted(outs.keys())
+        hn = []
+        for key in keys:
+            if 'lstm' in key:
+                hn.append(outs[key].detach().numpy())
+
+        cn = torch.tensor(self.cell_states)[:, :batch_size]
+        hn = torch.tensor(np.array(hn))[:, :batch_size]
+        
+        return (hn, cn) 
+
+    def forecast(self, X, batch_size):
+        """
+        If a model stateful, then i-th example of next batch wiil be
+        use the hidden and cell states from i-th example from previous batch
+        """
+        self.eval()
+        pred = torch.zeros((0, X[0].shape[1]))
+        for i in tqdm(range(0, len(X), batch_size)):
+            sz = min(len(X)-i, batch_size)
+            inp = torch.tensor(X[i:i+sz]).float()
+            states = self.get_prev_states(sz)
+            pred = torch.cat((pred, self.forward(inp, states)), dim=0)
+        return pred
+
 
 class Trainer:
     def __init__(self, model, criterion, optimizer, scheduler, device,
@@ -50,7 +79,7 @@ class Trainer:
         if not self.stateful or self.model.cell_states is None:
             return self.model(inputs)
         
-        prev = get_prev_states(self.model, inputs.size(0))
+        prev = self.model,get_prev_states(inputs.size(0))
         return self.model(inputs, prev)
 
     def pass_one_epoch(self, data, epoch, is_train):
