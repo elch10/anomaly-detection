@@ -44,8 +44,8 @@ class LSTM(torch.nn.Module):
 
         cn = torch.tensor(self.cell_states)[:, :batch_size]
         hn = torch.tensor(np.array(hn))[:, :batch_size]
-        
-        return (hn, cn) 
+
+        return (hn, cn)
 
     def forecast(self, X, batch_size):
         """
@@ -74,11 +74,11 @@ class Trainer:
         self.device = device
         self.stateful = stateful
         self.epochs = 0
-        
+
     def forward(self, inputs):
         if not self.stateful or self.model.cell_states is None:
             return self.model(inputs)
-        
+
         prev = self.model,get_prev_states(inputs.size(0))
         return self.model(inputs, prev)
 
@@ -146,7 +146,7 @@ class Trainer:
             self.model.reset_states()
             self.pass_one_epoch(val_data, epoch, is_train=False)
             self.model.reset_states()
-            
+
             avg_loss = self.running_loss.avg()
             self.scheduler.step(avg_loss)
 
