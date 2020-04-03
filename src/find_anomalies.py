@@ -27,7 +27,7 @@ DDRE_params = dict(
     learning_rate=1, reg_parameter=0.01,
 )
 
-ratios, chng_pts, peaks = compute_ratios(data.to_numpy(), DDRE_search_params, DDRE_params)
+ratios, chng_pts, peaks = compute_ratios_hp(data.to_numpy(), DDRE_search_params, DDRE_params)
 
 np.save('result/ratios-%s.npy' % (timestr, ), ratios)
 np.save('result/chng_pts-%s.npy' % (timestr, ), chng_pts)

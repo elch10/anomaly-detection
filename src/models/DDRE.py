@@ -317,7 +317,7 @@ def kernel_width_selection(Y, search_params, DDRE_params):
     return ssds, width_candidates[np.nanargmax(ssds)], optimal_sigmas[np.nanargmax(ssds)]
 
 
-def compute_ratios(y, search_params, DDRE_params):
+def compute_ratios_hp(y, search_params, DDRE_params):
     """
     Finds density ratios with hyperparameter search.
     Optimal values will be added to DDRE_params dictionary.
