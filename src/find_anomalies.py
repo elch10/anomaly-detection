@@ -2,7 +2,13 @@ import numpy as np
 import pandas as pd
 from src.models.DDRE import *
 
-from src.models.lstm import *
+from src.models.anomalies import (
+    build_lstm,
+    fit_generator,
+    find_optimal_tresh,
+    find_anomaly,
+    compute_diff
+)
 import keras
 
 import time
@@ -68,7 +74,7 @@ for i, (left, right) in enumerate(zip(boundaries[:-1], boundaries[1:])):
     X = rolling_window(piece, window_length, 0)[:-prediction_len]
     y = rolling_window(piece, window_length, prediction_len)
     
-    model = lstm_model(**LSTM_build_params)
+    model = build_lstm(**LSTM_build_params)
     b_size = min(len(y), batch_size)
     model.fit_generator(fit_generator(X, y, b_size), **LSTM_fit_params, steps_per_epoch=max(int(0.2 * len(X) / b_size), 1))
     
