@@ -64,7 +64,7 @@ class LSTM(torch.nn.Module):
 
 class Trainer:
     def __init__(self, model, criterion, optimizer, scheduler, device,
-                 log_dir='logs', stateful=False):
+                 log_dir=None, stateful=False, hparams=None):
         self.sw = SummaryWriter(log_dir)
         self.model = model.to(device)
         self.criterion = criterion
@@ -74,12 +74,13 @@ class Trainer:
         self.device = device
         self.stateful = stateful
         self.epochs = 0
+        self.hparams = hparams
 
     def forward(self, inputs):
         if not self.stateful or self.model.cell_states is None:
             return self.model(inputs)
 
-        prev = self.model,get_prev_states(inputs.size(0))
+        prev = self.model.get_prev_states(inputs.size(0))
         return self.model(inputs, prev)
 
     def pass_one_epoch(self, data, epoch, is_train):
@@ -139,6 +140,7 @@ class Trainer:
 
         for epoch in range(num_epochs):
             epoch += self.epochs
+
             print('Epoch {}/{}'.format(epoch, num_epochs - 1))
             print('-' * 10)
 
@@ -149,7 +151,7 @@ class Trainer:
 
             avg_loss = self.running_loss.avg()
             self.scheduler.step(avg_loss)
-
+            
             print('Loss: {:.4f}'.format(avg_loss))
 
             # deep copy the model
@@ -158,7 +160,11 @@ class Trainer:
                 best_model_wts = copy.deepcopy(self.model.state_dict())
 
             print()
+        
+        self.best_loss = best_loss
+        self.sw.add_hparams(self.hparams, {'best_loss': best_loss})
 
-        self.epochs += num_epochs
         # load best model weights
         self.model.load_state_dict(best_model_wts)
+
+        self.epochs += num_epochs
