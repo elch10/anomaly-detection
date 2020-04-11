@@ -1,19 +1,21 @@
+import copy
 from collections import OrderedDict
-from .utils import RunningLoss
+
+import numpy as np
+from tqdm import tqdm
 import torch
 from torch.utils.tensorboard import SummaryWriter
-from tqdm import tqdm
-import copy
-import numpy as np
 
 class LSTM(torch.nn.Module):
     def __init__(self, stateful=False, **config):
         super(LSTM, self).__init__()
+        config = copy.deepcopy(config)
+        output_size = config.pop('output_size', config['input_size'])
         self.lstm = torch.nn.LSTM(**config)
         self.num_directions = (2 if config.get('bidirectional', False) else 1)
         self.linear = torch.nn.Linear(
             config['hidden_size'] * self.num_directions,
-            config['input_size'])
+            output_size)
         self.outs = {}
         self.cell_states = None
 
@@ -23,7 +25,7 @@ class LSTM(torch.nn.Module):
         else:
             out, (hn, cn) = self.lstm(input, initial)
         lin_out = self.linear(out[:, -1])
-        self.outs = dict([('lstm_' + str(n), h) for n, h in enumerate(hn)])
+        self.outs = OrderedDict([('lstm_' + str(n), h) for n, h in enumerate(hn)])
         self.outs.update(linear=lin_out)
         self.cell_states = cn
         return lin_out
@@ -36,7 +38,7 @@ class LSTM(torch.nn.Module):
         outs = self.outs
         if self.cell_states is None and not outs:
             return None
-        keys = sorted(outs.keys())
+        keys = outs.keys()
         hn = []
         for key in keys:
             if 'lstm' in key:
@@ -53,7 +55,7 @@ class LSTM(torch.nn.Module):
         use the hidden and cell states from i-th example from previous batch
         """
         self.eval()
-        pred = torch.zeros((0, X[0].shape[1]))
+        pred = torch.zeros((0, self.linear.out_features))
         for i in tqdm(range(0, len(X), batch_size)):
             sz = min(len(X)-i, batch_size)
             inp = torch.tensor(X[i:i+sz]).float()
@@ -61,10 +63,20 @@ class LSTM(torch.nn.Module):
             pred = torch.cat((pred, self.forward(inp, states)), dim=0)
         return pred
 
+class RunningLoss:
+    def __init__(self):
+        self.losses = []
+
+    def update(self, loss, size):
+        self.losses += [loss] * size
+
+    def avg(self):
+        return np.mean(self.losses)
+
 
 class Trainer:
     def __init__(self, model, criterion, optimizer, scheduler, device,
-                 log_dir=None, stateful=False, hparams=None):
+                 log_dir, hparams, stateful=False):
         self.sw = SummaryWriter(log_dir)
         self.model = model.to(device)
         self.criterion = criterion
@@ -128,11 +140,11 @@ class Trainer:
         else:
             sw.add_scalar('Loss/test', self.running_loss.avg(), epoch)
             for name in outputs:
-                sw.add_histogram('Outputs ' + name, np.array(outputs[name]),
+                sw.add_histogram('Outputs/' + name, np.array(outputs[name]),
                                  epoch)
 
             for name in grads:
-                sw.add_histogram('Grads ' + name, np.array(grads[name]), epoch)
+                sw.add_histogram('Grads/' + name, np.array(grads[name]), epoch)
 
     def train(self, data, val_data, num_epochs):
         best_model_wts = copy.deepcopy(self.model.state_dict())

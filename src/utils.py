@@ -24,3 +24,13 @@ def inverse_ids(ids, rng):
     Finds indexes that is not in `ids` in range [0, rng]
     """
     return [i for i in range(rng) if i not in ids]
+
+import torch
+from torch.utils.data import TensorDataset, DataLoader
+
+def to_torch_dataloader(X, y, params):
+    X = torch.tensor(X).float()
+    y = torch.tensor(y).squeeze().float()
+    
+    dataset = TensorDataset(X, y)
+    return DataLoader(dataset, **params)
