@@ -1,34 +1,118 @@
 import copy
 from collections import OrderedDict
+from itertools import zip_longest
 
 import numpy as np
 from tqdm import tqdm
 import torch
 from torch.utils.tensorboard import SummaryWriter
 
+class TimeDistributed(torch.nn.Module):
+    def __init__(self, module, batch_first=False):
+        super(TimeDistributed, self).__init__()
+        self.module = module
+        self.batch_first = batch_first
+
+    def forward(self, x):
+        if len(x.size()) <= 2:
+            return self.module(x)
+
+        # Squash samples and timesteps into a single axis
+        x_reshape = x.contiguous().view(-1, x.size(-1))  # (samples * timesteps, input_size)
+
+        y = self.module(x_reshape)
+
+        # We have to reshape Y
+        if self.batch_first:
+            y = y.contiguous().view(x.size(0), -1, y.size(-1))  # (samples, timesteps, output_size)
+        else:
+            y = y.view(-1, x.size(1), y.size(-1))  # (timesteps, samples, output_size)
+
+        return y
+
 class LSTM(torch.nn.Module):
-    def __init__(self, stateful=False, **config):
+    def __init__(self,
+                 stateful,
+                 linear_transform,
+                 inp_stddev=0.2,
+                 layers_stddev=0,
+                 **config):
+        """
+        Linear transform specifies whether to add linear layer
+        to transform from hidden_size of LSTM to desired output_size
+        inp_stddev specifies standard deviatino of gaussian noise added to input
+        layers_stddev is analogue of inp_stddev but for between layer connections
+        """
         super(LSTM, self).__init__()
+
+        self.linear_transform = linear_transform
+        self.stateful = stateful
+        self.inp_stddev = inp_stddev
+        self.layers_stddev = layers_stddev
+
         config = copy.deepcopy(config)
-        output_size = config.pop('output_size', config['input_size'])
-        self.lstm = torch.nn.LSTM(**config)
+        self.num_layers = config.pop('num_layers', 1)
         self.num_directions = (2 if config.get('bidirectional', False) else 1)
-        self.linear = torch.nn.Linear(
-            config['hidden_size'] * self.num_directions,
-            output_size)
+        output_size = config.pop('output_size', config['input_size'])
+
+        inp_sizes = [config.pop('input_size')] + [config.get('hidden_size') * self.num_directions] * (self.num_layers - 1)
+
+        self.lstm = torch.nn.ModuleList()
+        for sz in inp_sizes:
+            self.lstm.append(torch.nn.LSTM(input_size=sz, **config))
+
+        self.linear_transform = linear_transform
+        if linear_transform:
+            self.td = TimeDistributed(torch.nn.Linear(
+                    config['hidden_size'] * self.num_directions,
+                    output_size),
+                config['batch_first'])
+
         self.outs = {}
         self.cell_states = None
 
-    def forward(self, input, initial=None):
+    def add_gaussian(self, inp, stddev):
+        if stddev > 0 and self.training:
+            return inp + torch.autograd.Variable(torch.randn(inp.size()) * stddev)
+        return inp
+
+    def lstm_forward(self, input, initial=None):
+        out = input
+        hns, cns = [], []
+        
         if not initial:
-            out, (hn, cn) = self.lstm(input)
-        else:
-            out, (hn, cn) = self.lstm(input, initial)
-        lin_out = self.linear(out[:, -1])
+            initial = []
+
+        for i, (lstm, init) in enumerate(zip_longest(self.lstm, zip(*initial))):
+            out, (hn, cn) = lstm(out, init)
+            if i != len(self.lstm) - 1 or self.linear_transform:
+                out = self.add_gaussian(out, self.layers_stddev)
+            hns.append(hn)
+            cns.append(cn)
+
+        return out, (hns, cns)
+
+
+    def forward(self, input, initial=None, last_only=False):
+        """
+        Last_only characterizes whether to return value only
+        in time stamp t of LSTM or return sequence of timestamps
+        """
+        input = self.add_gaussian(input, self.inp_stddev)
+
+        out, (hn, cn) = self.lstm_forward(input, initial)
+
         self.outs = OrderedDict([('lstm_' + str(n), h) for n, h in enumerate(hn)])
-        self.outs.update(linear=lin_out)
         self.cell_states = cn
-        return lin_out
+
+        if last_only:
+            out = out[:, -1]
+
+        if self.linear_transform:
+            out = self.td(out)
+            self.outs.update(linear=out)
+        
+        return out
 
     def reset_states(self):
         self.outs = None
@@ -38,30 +122,35 @@ class LSTM(torch.nn.Module):
         outs = self.outs
         if self.cell_states is None and not outs:
             return None
+
         keys = outs.keys()
         hn = []
         for key in keys:
             if 'lstm' in key:
-                hn.append(outs[key].detach().numpy())
+                hn.append(outs[key][:, :batch_size].detach())
 
-        cn = torch.tensor(self.cell_states)[:, :batch_size]
-        hn = torch.tensor(np.array(hn))[:, :batch_size]
+        cn = [0] * len(self.cell_states)
+        for i in range(len(self.cell_states)):
+            cn[i] = self.cell_states[i][:, :batch_size].detach()
 
         return (hn, cn)
 
     def forecast(self, X, batch_size):
         """
+        Forecasts value at next time, having previous windows_len examples
         If a model stateful, then i-th example of next batch wiil be
         use the hidden and cell states from i-th example from previous batch
         """
         self.eval()
-        pred = torch.zeros((0, self.linear.out_features))
+        pred = torch.zeros((0, self.td.module.out_features))
         for i in tqdm(range(0, len(X), batch_size)):
             sz = min(len(X)-i, batch_size)
             inp = torch.tensor(X[i:i+sz]).float()
             states = self.get_prev_states(sz)
-            pred = torch.cat((pred, self.forward(inp, states)), dim=0)
+            pred = torch.cat((pred, self.forward(inp, states, True)), dim=0)
         return pred
+
+
 
 class RunningLoss:
     def __init__(self):
@@ -74,17 +163,17 @@ class RunningLoss:
         return np.mean(self.losses)
 
 
+
 class Trainer:
-    def __init__(self, model, criterion, optimizer, scheduler, device,
-                 log_dir, hparams, stateful=False):
+    def __init__(self, model, criterion, optimizer, scheduler, 
+                 device, log_dir, hparams):
         self.sw = SummaryWriter(log_dir)
         self.model = model.to(device)
         self.criterion = criterion
         self.optimizer = optimizer
         self.scheduler = scheduler
-        self.initial_epoch = 0
         self.device = device
-        self.stateful = stateful
+        self.stateful = model.stateful
         self.epochs = 0
         self.hparams = hparams
 
