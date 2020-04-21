@@ -33,27 +33,30 @@ class TimeDistributed(torch.nn.Module):
 class LSTM(torch.nn.Module):
     def __init__(self,
                  stateful,
-                 linear_transform,
+                 transform=None,
                  inp_stddev=0.2,
                  layers_stddev=0,
                  **config):
         """
-        Linear transform specifies whether to add linear layer
-        to transform from hidden_size of LSTM to desired output_size
-        inp_stddev specifies standard deviatino of gaussian noise added to input
-        layers_stddev is analogue of inp_stddev but for between layer connections
+        transform: torch.nn.Module
+            Specifies module that will be used to transform
+            from hidden_size of LSTM. Note that this module will be used
+            over TimeDistributed analogue of Keras
+        inp_stddev: float
+            specifies standard deviatino of gaussian noise added to input
+        layers_stddev: float
+            is analogue of inp_stddev but for between layer connections
+            (doesn't apply to communications in transform)
         """
         super(LSTM, self).__init__()
 
-        self.linear_transform = linear_transform
+        self.transform_used = transform is not None
         self.stateful = stateful
         self.inp_stddev = inp_stddev
         self.layers_stddev = layers_stddev
 
-        config = copy.deepcopy(config)
         self.num_layers = config.pop('num_layers', 1)
         self.num_directions = (2 if config.get('bidirectional', False) else 1)
-        output_size = config.pop('output_size', config['input_size'])
 
         inp_sizes = [config.pop('input_size')] + [config.get('hidden_size') * self.num_directions] * (self.num_layers - 1)
 
@@ -61,17 +64,13 @@ class LSTM(torch.nn.Module):
         for sz in inp_sizes:
             self.lstm.append(torch.nn.LSTM(input_size=sz, **config))
 
-        self.linear_transform = linear_transform
-        if linear_transform:
-            self.td = TimeDistributed(torch.nn.Linear(
-                    config['hidden_size'] * self.num_directions,
-                    output_size),
-                config['batch_first'])
+        if self.transform_used:
+            self.td = TimeDistributed(transform, config.get('batch_first', False))
 
         self.outs = {}
         self.cell_states = None
 
-    def add_gaussian(self, inp, stddev):
+    def _add_gaussian(self, inp, stddev):
         if stddev > 0 and self.training:
             return inp + torch.autograd.Variable(torch.randn(inp.size()) * stddev)
         return inp
@@ -79,14 +78,14 @@ class LSTM(torch.nn.Module):
     def lstm_forward(self, input, initial=None):
         out = input
         hns, cns = [], []
-        
+
         if not initial:
             initial = []
 
         for i, (lstm, init) in enumerate(zip_longest(self.lstm, zip(*initial))):
             out, (hn, cn) = lstm(out, init)
-            if i != len(self.lstm) - 1 or self.linear_transform:
-                out = self.add_gaussian(out, self.layers_stddev)
+            if i != len(self.lstm) - 1 or self.transform_used:
+                out = self._add_gaussian(out, self.layers_stddev)
             hns.append(hn)
             cns.append(cn)
 
@@ -98,7 +97,7 @@ class LSTM(torch.nn.Module):
         Last_only characterizes whether to return value only
         in time stamp t of LSTM or return sequence of timestamps
         """
-        input = self.add_gaussian(input, self.inp_stddev)
+        input = self._add_gaussian(input, self.inp_stddev)
 
         out, (hn, cn) = self.lstm_forward(input, initial)
 
@@ -108,10 +107,10 @@ class LSTM(torch.nn.Module):
         if last_only:
             out = out[:, -1]
 
-        if self.linear_transform:
+        if self.transform_used:
             out = self.td(out)
-            self.outs.update(linear=out)
-        
+            self.outs.update(transform=out)
+
         return out
 
     def reset_states(self):
@@ -120,7 +119,7 @@ class LSTM(torch.nn.Module):
 
     def get_prev_states(self, batch_size):
         outs = self.outs
-        if self.cell_states is None and not outs:
+        if not self.stateful or (self.cell_states is None and not outs):
             return None
 
         keys = outs.keys()
@@ -194,7 +193,7 @@ class Trainer:
             model.train()
         else:
             model.eval()
-            outputs, grads = {}, {}
+            outputs, grads, weights = {}, {}, {}
 
         with tqdm(data) as pbar:
             pbar.set_description('Epoch ' + str(epoch) + ' of ' +
@@ -224,16 +223,20 @@ class Trainer:
                         grads[name] = grads.get(name, [])
                         grads[name].extend(param.grad.view(-1).numpy())
 
+                        weights[name] = weights.get(name, [])
+                        weights[name].extend(param.view(-1).detach().numpy())
+
         if is_train:
             sw.add_scalar('Loss/train', self.running_loss.avg(), epoch)
         else:
             sw.add_scalar('Loss/test', self.running_loss.avg(), epoch)
+
             for name in outputs:
-                sw.add_histogram('Outputs/' + name, np.array(outputs[name]),
-                                 epoch)
+                sw.add_histogram('Outputs/' + name, np.array(outputs[name]), epoch)
 
             for name in grads:
                 sw.add_histogram('Grads/' + name, np.array(grads[name]), epoch)
+                sw.add_histogram('Weigths/' + name, np.array(weights[name]), epoch)
 
     def train(self, data, val_data, num_epochs):
         best_model_wts = copy.deepcopy(self.model.state_dict())
